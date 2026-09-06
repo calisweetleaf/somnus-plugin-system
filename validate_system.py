@@ -451,6 +451,88 @@ def check_resource_monitor() -> CheckResult:
                               f"not the hardcoded zero from the original implementation")
 
 
+@timed_check("taint_tracking")
+def check_taint_tracking() -> CheckResult:
+    """Verify taint flow analysis detects data flow from sources to sinks."""
+    import ast
+    from security import TaintTracker, TaintLabel
+
+    code_with_taint = '''
+data = input("enter: ")
+result = eval(data)
+'''
+    tree = ast.parse(code_with_taint)
+    tracker = TaintTracker()
+    flows = tracker.analyze(tree)
+
+    if len(flows) != 1:
+        return CheckResult(name="", status="fail",
+                           detail=f"expected 1 tainted flow, got {len(flows)}")
+
+    flow = flows[0]
+    assert flow.source_label == TaintLabel.USER_INPUT
+    assert flow.sink_name == "eval"
+
+    safe_code = '''
+data = "safe_string"
+result = eval(data)
+'''
+    tree2 = ast.parse(safe_code)
+    safe_flows = tracker.analyze(tree2)
+    assert len(safe_flows) == 0, "literal string should not be tainted"
+
+    multi_code = '''
+raw = input("x")
+processed = raw
+exec(processed)
+'''
+    tree3 = ast.parse(multi_code)
+    propagated = tracker.analyze(tree3)
+    assert len(propagated) == 1, f"taint should propagate through assignment, got {len(propagated)}"
+    assert propagated[0].source_label == TaintLabel.USER_INPUT
+    assert propagated[0].sink_name == "exec"
+
+    return CheckResult(name="", status="pass",
+                       detail="taint tracking: direct flow detected, safe code clean, propagation through assignment works")
+
+
+@timed_check("circuit_breaker")
+def check_circuit_breaker() -> CheckResult:
+    """Verify circuit breaker with exponential backoff and jitter."""
+    from orchestration import CircuitBreaker, CircuitBreakerState
+
+    cb = CircuitBreaker(failure_threshold=3, base_timeout_s=0.01, max_timeout_s=1.0)
+    assert cb.state == CircuitBreakerState.CLOSED
+    assert not cb.is_open
+
+    cb.record_failure()
+    cb.record_failure()
+    assert cb.state == CircuitBreakerState.CLOSED
+
+    cb.record_failure()
+    assert cb.state == CircuitBreakerState.OPEN, f"should be OPEN after 3 failures, got {cb.state}"
+
+    assert cb.is_open
+
+    import time
+    time.sleep(0.02)
+
+    assert not cb.is_open, "should transition to HALF_OPEN after timeout"
+    assert cb.state == CircuitBreakerState.HALF_OPEN
+
+    cb.record_success()
+    cb.record_success()
+    cb.record_success()
+    assert cb.state == CircuitBreakerState.CLOSED, "should close after 3 successes in half-open"
+
+    snap = cb.snapshot()
+    assert "state" in snap and "failure_count" in snap
+
+    return CheckResult(name="", status="pass",
+                       detail="circuit breaker: closed->open(3 failures)->half_open(timeout)->closed(3 successes)",
+                       extra=snap)
+
+
 @timed_check("host_boundary_protocol_conformance")
 def check_protocol_conformance() -> CheckResult:
     """Verify that a conforming implementation passes runtime protocol checks."""
@@ -512,6 +594,8 @@ def main() -> int:
         check_security_import,
         check_hot_reload_no_pickle,
         check_resource_monitor,
+        check_taint_tracking,
+        check_circuit_breaker,
         check_protocol_conformance,
     ]
 
