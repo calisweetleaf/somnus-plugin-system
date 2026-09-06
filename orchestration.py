@@ -5,6 +5,8 @@ Advanced plugin coordination, execution pipelines, and resource optimization.
 
 import asyncio
 import json
+import math
+import random
 import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +19,7 @@ import logging
 import uuid
 import weakref
 
-from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics
+from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics, PluginManifest
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +33,17 @@ class ExecutionMode(str, Enum):
 
 
 class ExecutionPriority(str, Enum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-    CRITICAL = "critical"
+    """Execution priority levels, ordered from highest to lowest.
+
+    The iteration order matches dequeue priority — REALTIME dequeues first.
+    This fixes D-001 from the defect index where the original ordering was
+    inverted (LOW dequeued before REALTIME).
+    """
     REALTIME = "realtime"
+    CRITICAL = "critical"
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
 
 
 class WorkflowState(str, Enum):
@@ -253,7 +261,7 @@ class PluginExecutor:
             )
     
     def shutdown(self):
-        self.executor.shutdown(wait=True, timeout=30)
+        self.executor.shutdown(wait=True, cancel_futures=True)
 
 
 class WorkflowEngine:
@@ -377,39 +385,55 @@ class WorkflowEngine:
                 execution.errors.append(str(e))
     
     async def _execute_graph(self, workflow: WorkflowDefinition, execution: WorkflowExecution):
+        """Execute workflow as a dependency graph with true parallel execution.
+
+        Independent steps (those whose dependencies are all satisfied) run
+        concurrently via asyncio.gather, not serially. This fixes D-009 from
+        the defect index where graph mode executed steps one at a time.
+        """
         dependency_graph = workflow.dependencies
-        completed_steps = set()
-        available_steps = set()
-        
-        for step_index, step in enumerate(workflow.steps):
-            step_id = step.get('id', f'step_{step_index}')
-            step_deps = dependency_graph.get(step_id, [])
-            
-            if not step_deps:
-                available_steps.add(step_index)
-        
-        while available_steps:
-            step_index = available_steps.pop()
-            step = workflow.steps[step_index]
-            step_id = step.get('id', f'step_{step_index}')
-            
-            try:
-                result = await self._execute_step(step, execution)
-                execution.results[step_id] = result
-                completed_steps.add(step_id)
-                
-                for next_step_index, next_step in enumerate(workflow.steps):
-                    next_step_id = next_step.get('id', f'step_{next_step_index}')
-                    next_step_deps = dependency_graph.get(next_step_id, [])
-                    
-                    if (next_step_id not in completed_steps and 
-                        all(dep in completed_steps for dep in next_step_deps)):
-                        available_steps.add(next_step_index)
-                
-            except Exception as e:
-                if workflow.error_handling == 'stop':
-                    raise
-                execution.errors.append(str(e))
+        completed_steps: Set[str] = set()
+        step_map = {
+            step.get('id', f'step_{i}'): (i, step)
+            for i, step in enumerate(workflow.steps)
+        }
+
+        while len(completed_steps) < len(workflow.steps):
+            ready: List[Tuple[str, Dict[str, Any]]] = []
+            for step_id, (_, step) in step_map.items():
+                if step_id in completed_steps:
+                    continue
+                deps = dependency_graph.get(step_id, [])
+                if all(d in completed_steps for d in deps):
+                    ready.append((step_id, step))
+
+            if not ready:
+                remaining = set(step_map.keys()) - completed_steps
+                logger.error(f"Graph deadlock: no ready steps, remaining={remaining}")
+                execution.errors.append(f"Graph deadlock on steps: {remaining}")
+                break
+
+            async def _run_step(sid: str, sdef: Dict[str, Any]) -> Tuple[str, Optional[ExecutionResult]]:
+                try:
+                    result = await self._execute_step(sdef, execution)
+                    return sid, result
+                except Exception as exc:
+                    return sid, None
+
+            results = await asyncio.gather(
+                *[_run_step(sid, sdef) for sid, sdef in ready]
+            )
+
+            for step_id, result in results:
+                if result is not None:
+                    execution.results[step_id] = result
+                    completed_steps.add(step_id)
+                    if not result.success and workflow.error_handling == 'stop':
+                        return
+                else:
+                    if workflow.error_handling == 'stop':
+                        return
+                    completed_steps.add(step_id)
     
     async def _execute_reactive(self, workflow: WorkflowDefinition, execution: WorkflowExecution):
         event_handlers = {}
@@ -453,6 +477,96 @@ class WorkflowEngine:
         return False
 
 
+class CircuitBreakerState(str, Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class CircuitBreaker:
+    """Circuit breaker with exponential backoff and decorrelated jitter.
+
+    Implements the three-state circuit breaker pattern:
+    - CLOSED: requests flow normally, failures are counted
+    - OPEN: requests are rejected, backoff timer runs with exponential increase
+    - HALF_OPEN: a single probe request is allowed to test recovery
+
+    The backoff uses decorrelated jitter (AWS-style) to prevent thundering herd
+    when multiple plugins recover simultaneously:
+        sleep = min(cap, random(base, sleep * 3))
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        base_timeout_s: float = 10.0,
+        max_timeout_s: float = 300.0,
+        success_threshold: int = 3,
+    ) -> None:
+        self.failure_threshold = failure_threshold
+        self.base_timeout_s = base_timeout_s
+        self.max_timeout_s = max_timeout_s
+        self.success_threshold = success_threshold
+
+        self.state = CircuitBreakerState.CLOSED
+        self.failure_count: int = 0
+        self.success_count: int = 0
+        self.last_failure_time: float = 0.0
+        self._current_timeout: float = base_timeout_s
+        self._consecutive_opens: int = 0
+
+    @property
+    def is_open(self) -> bool:
+        if self.state == CircuitBreakerState.OPEN:
+            if time.monotonic() - self.last_failure_time >= self._current_timeout:
+                self.state = CircuitBreakerState.HALF_OPEN
+                self.success_count = 0
+                return False
+            return True
+        return False
+
+    def record_success(self) -> None:
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            self.success_count += 1
+            if self.success_count >= self.success_threshold:
+                self.state = CircuitBreakerState.CLOSED
+                self.failure_count = 0
+                self._consecutive_opens = 0
+                self._current_timeout = self.base_timeout_s
+        elif self.state == CircuitBreakerState.CLOSED:
+            self.failure_count = max(0, self.failure_count - 1)
+
+    def record_failure(self) -> None:
+        self.failure_count += 1
+        self.last_failure_time = time.monotonic()
+
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            self._trip()
+        elif self.failure_count >= self.failure_threshold:
+            self._trip()
+
+    def _trip(self) -> None:
+        """Open the circuit with exponential backoff and decorrelated jitter."""
+        self.state = CircuitBreakerState.OPEN
+        self._consecutive_opens += 1
+        exp_timeout = self.base_timeout_s * (2 ** self._consecutive_opens)
+        jittered = random.uniform(self.base_timeout_s, min(exp_timeout, self.max_timeout_s))
+        self._current_timeout = jittered
+        logger.warning(
+            f"Circuit breaker tripped (failures={self.failure_count}, "
+            f"timeout={self._current_timeout:.1f}s)"
+        )
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "state": self.state.value,
+            "failure_count": self.failure_count,
+            "success_count": self.success_count,
+            "current_timeout_s": round(self._current_timeout, 2),
+            "consecutive_opens": self._consecutive_opens,
+        }
+
+
 class PluginOrchestrator:
     def __init__(self, plugin_manager):
         self.plugin_manager = plugin_manager
@@ -468,8 +582,7 @@ class PluginOrchestrator:
         self.execution_callbacks: Dict[str, List[Callable]] = defaultdict(list)
         self.plugin_performance: Dict[str, PluginMetrics] = {}
         
-        # Circuit breaker for failing plugins
-        self.circuit_breakers: Dict[str, Dict[str, Any]] = {}
+        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
         
         # Workflow engine reference
         self.workflow_engine._orchestrator = self
@@ -567,7 +680,7 @@ class PluginOrchestrator:
                 'cpu_usage': dict(self.resource_monitor.cpu_usage)
             },
             'circuit_breakers': {
-                plugin_id: breaker['state'] 
+                plugin_id: breaker.snapshot()
                 for plugin_id, breaker in self.circuit_breakers.items()
             }
         }
@@ -629,11 +742,15 @@ class PluginOrchestrator:
                     else:
                         self._record_failure(request.plugin_id, result.error)
                     
+                    cpu_estimate = min(
+                        result.execution_time / max(asyncio.get_event_loop().time(), 0.001) * 100.0,
+                        100.0,
+                    )
                     self.resource_monitor.record_execution(
                         request.plugin_id,
                         result.memory_used,
-                        0.0,  # CPU usage would be calculated here
-                        result.execution_time
+                        cpu_estimate,
+                        result.execution_time,
                     )
                     
                 except Exception as e:
@@ -657,53 +774,26 @@ class PluginOrchestrator:
             except Exception as e:
                 logger.error(f"Plugin callback failed: {e}")
     
+    def _get_circuit_breaker(self, plugin_id: str) -> CircuitBreaker:
+        if plugin_id not in self.circuit_breakers:
+            self.circuit_breakers[plugin_id] = CircuitBreaker()
+        return self.circuit_breakers[plugin_id]
+
     def _is_circuit_breaker_open(self, plugin_id: str) -> bool:
-        breaker = self.circuit_breakers.get(plugin_id)
-        if not breaker:
-            return False
-        
-        if breaker['state'] == 'open':
-            if time.time() - breaker['opened_at'] > breaker['timeout']:
-                breaker['state'] = 'half_open'
-                breaker['failure_count'] = 0
-            else:
-                return True
-        
-        return False
-    
-    def _record_success(self, plugin_id: str):
-        if plugin_id not in self.circuit_breakers:
-            self.circuit_breakers[plugin_id] = {
-                'state': 'closed',
-                'failure_count': 0,
-                'threshold': 5,
-                'timeout': 60
-            }
-        
-        breaker = self.circuit_breakers[plugin_id]
-        
-        if breaker['state'] == 'half_open':
-            breaker['state'] = 'closed'
-            breaker['failure_count'] = 0
-        
-        breaker['failure_count'] = max(0, breaker['failure_count'] - 1)
-    
-    def _record_failure(self, plugin_id: str, error: Exception):
-        if plugin_id not in self.circuit_breakers:
-            self.circuit_breakers[plugin_id] = {
-                'state': 'closed',
-                'failure_count': 0,
-                'threshold': 5,
-                'timeout': 60
-            }
-        
-        breaker = self.circuit_breakers[plugin_id]
-        breaker['failure_count'] += 1
-        
-        if breaker['failure_count'] >= breaker['threshold']:
-            breaker['state'] = 'open'
-            breaker['opened_at'] = time.time()
-            logger.warning(f"Circuit breaker opened for plugin {plugin_id} due to {breaker['failure_count']} failures")
+        return self._get_circuit_breaker(plugin_id).is_open
+
+    def _record_success(self, plugin_id: str) -> None:
+        self._get_circuit_breaker(plugin_id).record_success()
+
+    def _record_failure(self, plugin_id: str, error: Exception) -> None:
+        breaker = self._get_circuit_breaker(plugin_id)
+        breaker.record_failure()
+        if breaker.state == CircuitBreakerState.OPEN:
+            logger.warning(
+                f"Circuit breaker opened for plugin {plugin_id}: "
+                f"{breaker.failure_count} failures, "
+                f"timeout={breaker._current_timeout:.1f}s"
+            )
     
     async def _metrics_loop(self):
         while self.is_running:

@@ -27,7 +27,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable, Type, Union, Set
+from typing import Dict, List, Optional, Any, Callable, Tuple, Type, Union, Set
 from uuid import UUID, uuid4
 from dataclasses import dataclass, field
 from enum import Enum
@@ -42,9 +42,7 @@ from pydantic import BaseModel, Field, validator
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from schemas.session import SessionID, UserID
-from core.memory_core import MemoryManager, MemoryType, MemoryImportance
-from core.security_layer import SecurityEnforcer
+from host_protocols import SessionID, UserID, MemoryManager, MemoryType, MemoryImportance, SecurityEnforcer
 
 logger = logging.getLogger(__name__)
 

@@ -248,3 +248,52 @@ Additional corrections from review, not from the cold agent:
 
 - **Hazards:** none new. The `Explore`-can-write lesson stands in `CLAUDE.md` §3a and is now
   mechanically guarded by `gate.sh` [5b] rather than only documented.
+
+### 2026-09-06 10:58 UTC — Stilgar (Claude Code) — SOTA++ deep integration
+
+- **Base:** `bc89a50` (PACKET-001/002/003 commit)
+- **Did:**
+  - **PACKET-001 LANDED:** Created `.venv`, installed all 9 declared dependencies, all 7 root
+    modules import — the PREDICTED `ModuleNotFoundError` at `plugin_base.py:22` is now OBSERVED
+    and RESOLVED.
+  - **PACKET-002 PARTIAL:** Absorbed `PluginPermission` (8 values) and `PluginType` (8 values)
+    from `plugin_manager.py` into `plugin_base.py`. Narrowed `manifest.plugin_type` from `str`
+    to `PluginType` enum, `manifest.permissions` from `List[str]` to `List[PluginPermission]`.
+    The PREDICTED `ImportError` at `security.py:34` (`PluginPermission` not defined in
+    `plugin_base`) is now OBSERVED and RESOLVED. Superseded class definitions still exist in
+    `plugin_manager.py` — gate reports 4 PENDING for the duplicate names.
+  - **PACKET-003 LANDED:** Host boundary realized via Protocol declaration strategy. Created
+    `host_protocols.py` with `typing.Protocol` contracts for `MemoryManager`, `SecurityEnforcer`,
+    plus concrete `MemoryType`/`MemoryImportance`/`MemoryScope` enums and `SessionID`/`UserID`
+    type aliases. All 6 host-boundary import sites replaced with `host_protocols` imports.
+  - **SOTA++ in plugin_base.py:** Capability lattice algebra (`CapabilitySet` with
+    meet/join/complement/subsumes/gap), content-addressed state checkpoints with Merkle
+    hashing (deduplication), EWMA metrics, validated state machine (directed graph of legal
+    transitions with `InvalidStateTransition`), typed event bus, real resource monitoring
+    via stdlib `resource` module, semver validation on manifest version.
+  - **Defect fixes:** D-001 (inverted priority queue), D-002 (shutdown TypeError), D-011
+    (hardcoded zero CPU metrics), pickle deserialization vulnerability in `hot_reload.py`,
+    async file operations in `discovery.py`.
+  - **Validation harness:** 15 checks, all PASS. JSON + MD artifacts per run.
+- **Validation:**
+  - `bash gate.sh` — PASS on 11 runnable checks, 6 PENDING (known work), 2 NOT RUN
+  - `.venv/bin/python validate_system.py` — 15/15 PASS
+- **Proof facts:**
+  - 8/8 modules import: host_protocols, plugin_base, plugin_manager, security, discovery,
+    orchestration, hot_reload, marketplace
+  - PluginPermission(8) and PluginType(8) canonical in plugin_base
+  - Capability lattice algebra: join(3), meet(1), universe(8), subsumes, gap verified
+  - EWMA metrics: mean=3.227, std=1.556 for test sequence [1,2,3,4,5]
+  - State machine: 18 valid edges across 8 states
+  - Content-addressed checkpoints: identical states produce identical hashes
+  - Full async lifecycle: init→ready→active→checkpoint→cleanup→terminated with events
+  - Real RSS measurement: 60MB (was hardcoded 0 in original)
+  - Priority order: [realtime, critical, high, normal, low] (was inverted)
+  - Pickle payloads rejected in hot_reload deserialization
+- **Surfaces synchronized:** STATE.md, filetree.md, NOTEPAD.md
+- **Next agent:** Complete PACKET-002 by deleting the 4 superseded class definitions from
+  `plugin_manager.py` and re-basing its loader onto `plugin_base.PluginBase`. Then execute
+  PACKET-004 (reference plugin).
+- **Hazards:** `plugin_manager.py`'s loader at `:701` still gates on its local `PluginBase`.
+  Until that gate is re-based, plugins authored against the canonical `plugin_base.PluginBase`
+  are rejected by the only working loader.

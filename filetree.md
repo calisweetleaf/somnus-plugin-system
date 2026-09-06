@@ -1,8 +1,8 @@
 # File Tree — somnus-plugin-system
 
-**Generated:** 2026-09-05
-**Root:** `/home/daeron/LAB/Experiments/projects/somnus-plugin-system`
-**Base commit:** `5278e3c` (extraction from `somnus-os` donor codebase)
+**Generated:** 2026-09-06
+**Root:** somnus-plugin-system
+**Base commit:** `5278e3c` (extraction) → SOTA++ integration pass
 
 > **Whole-codebase awareness, not dispatch.** Consult this when regaining orientation, after a
 > focused read sequence, or after structural change. **Do not route the active task from it** —
@@ -31,8 +31,11 @@ somnus-plugin-system/
 │
 ├── pyproject.toml             Dependency contract (9 deps, no pins)
 ├── gate.sh                    Validation entrypoint — honest, reports NOT RUN
+├── validate_system.py         Production validation harness (15 checks)
+├── python_production_doctor.py  Somnus diagnostic toolkit
 │
-├── plugin_base.py     620 L   CANONICAL — manifest, capabilities, lifecycle, base class
+├── host_protocols.py          HOST BOUNDARY — Protocol contracts for embedding system
+├── plugin_base.py     750+L   CANONICAL — manifest, capabilities, lifecycle, base class
 ├── plugin_manager.py 1055 L   SUPERSEDED — holds the only loader + FastAPI mount
 ├── security.py        914 L   Trust boundary: AST analysis, sandbox, crypto validation
 ├── discovery.py       824 L   Discovery, dependency graph, topological resolution
@@ -73,6 +76,11 @@ somnus-plugin-system/
 │   ├── sandbox/untrusted/     empty
 │   └── templates/             agent_action/ api_extension/ basic_plugin/
 │                              ui_component/ workflow_node/ — all empty
+│
+├── test/
+│   └── system/
+│       └── runs/                  Timestamped validation harness results
+│           └── <timestamp>/       result.json, result.md per run
 │
 └── (no foreign artifacts — the 2026-09-05 scaffolding was deleted; see AUTHORITY_MAP.md §6)
 ```

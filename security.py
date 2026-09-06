@@ -18,6 +18,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set, Tuple, Union
 import logging
@@ -31,7 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.fernet import Fernet
 
-from plugin_base import PluginManifest, PluginPermission
+from plugin_base import PluginManifest, PluginPermission, PluginCapability
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +179,151 @@ except Exception as e:
         return sandbox_wrapper
 
 
+class TaintLabel(str, Enum):
+    """Taint classification for data flow tracking in plugin security analysis.
+
+    Tracks how untrusted data flows from sources (user input, network, file reads)
+    to sinks (eval, exec, subprocess, file writes, network sends). A tainted value
+    reaching an un-sanitized sink is a confirmed security issue, not just a pattern match.
+    """
+    USER_INPUT = "user_input"
+    NETWORK_DATA = "network_data"
+    FILE_DATA = "file_data"
+    DESERIALIZED = "deserialized"
+    ENVIRONMENT = "environment"
+
+
+@dataclass
+class TaintedFlow:
+    """A confirmed tainted data flow from source to sink."""
+    source_label: TaintLabel
+    source_line: int
+    source_name: str
+    sink_line: int
+    sink_name: str
+    file_path: Optional[Path] = None
+
+    def to_issue(self) -> SecurityIssue:
+        return SecurityIssue(
+            severity="CRITICAL",
+            category="TAINTED_DATA_FLOW",
+            description=(
+                f"Tainted data ({self.source_label.value}) flows from "
+                f"'{self.source_name}' (line {self.source_line}) to "
+                f"sink '{self.sink_name}' (line {self.sink_line}) without sanitization"
+            ),
+            file_path=self.file_path,
+            line_number=self.sink_line,
+            recommendation="Sanitize or validate the data before passing to the sink",
+        )
+
+
+class TaintTracker:
+    """Intra-procedural taint analysis via AST data-flow tracking.
+
+    Tracks assignments that carry tainted data (from network reads, file reads,
+    user input, deserialization) and identifies when tainted variables reach
+    dangerous sinks (eval, exec, subprocess, os.system).
+
+    This is a forward analysis: we walk the AST in order, propagating taint
+    through assignments and function calls.
+    """
+
+    TAINT_SOURCES: Dict[str, TaintLabel] = {
+        "input": TaintLabel.USER_INPUT,
+        "raw_input": TaintLabel.USER_INPUT,
+        "recv": TaintLabel.NETWORK_DATA,
+        "read": TaintLabel.FILE_DATA,
+        "readline": TaintLabel.FILE_DATA,
+        "readlines": TaintLabel.FILE_DATA,
+        "json.load": TaintLabel.DESERIALIZED,
+        "json.loads": TaintLabel.DESERIALIZED,
+        "pickle.load": TaintLabel.DESERIALIZED,
+        "pickle.loads": TaintLabel.DESERIALIZED,
+        "yaml.load": TaintLabel.DESERIALIZED,
+        "os.environ": TaintLabel.ENVIRONMENT,
+        "os.getenv": TaintLabel.ENVIRONMENT,
+    }
+
+    DANGEROUS_SINKS = frozenset({
+        "eval", "exec", "compile", "__import__",
+        "os.system", "os.popen",
+        "subprocess.run", "subprocess.call", "subprocess.Popen",
+        "subprocess.check_output", "subprocess.check_call",
+    })
+
+    def analyze(self, tree: ast.Module, file_path: Optional[Path] = None) -> List[TaintedFlow]:
+        """Run taint analysis on a parsed AST module."""
+        tainted_vars: Dict[str, Tuple[TaintLabel, int, str]] = {}
+        flows: List[TaintedFlow] = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                self._handle_assignment(node, tainted_vars)
+            elif isinstance(node, ast.Call):
+                self._check_sink(node, tainted_vars, flows, file_path)
+
+        return flows
+
+    def _get_call_name(self, node: ast.Call) -> Optional[str]:
+        """Extract the fully-qualified name of a function call."""
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            parts = []
+            obj = node.func
+            while isinstance(obj, ast.Attribute):
+                parts.append(obj.attr)
+                obj = obj.value  # type: ignore[assignment]
+            if isinstance(obj, ast.Name):
+                parts.append(obj.id)
+            return ".".join(reversed(parts))
+        return None
+
+    def _handle_assignment(
+        self, node: ast.Assign, tainted: Dict[str, Tuple[TaintLabel, int, str]]
+    ) -> None:
+        """If the RHS is a taint source or a tainted variable, propagate taint to LHS."""
+        if isinstance(node.value, ast.Call):
+            call_name = self._get_call_name(node.value)
+            if call_name and call_name in self.TAINT_SOURCES:
+                label = self.TAINT_SOURCES[call_name]
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        tainted[target.id] = (label, getattr(node, "lineno", 0), call_name)
+
+        elif isinstance(node.value, ast.Name) and node.value.id in tainted:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    tainted[target.id] = tainted[node.value.id]
+
+    def _check_sink(
+        self,
+        node: ast.Call,
+        tainted: Dict[str, Tuple[TaintLabel, int, str]],
+        flows: List[TaintedFlow],
+        file_path: Optional[Path],
+    ) -> None:
+        """Check if any argument to a dangerous sink is tainted."""
+        call_name = self._get_call_name(node)
+        if call_name not in self.DANGEROUS_SINKS:
+            return
+
+        for arg in node.args:
+            if isinstance(arg, ast.Name) and arg.id in tainted:
+                label, source_line, source_name = tainted[arg.id]
+                flows.append(TaintedFlow(
+                    source_label=label,
+                    source_line=source_line,
+                    source_name=source_name,
+                    sink_line=getattr(node, "lineno", 0),
+                    sink_name=call_name,
+                    file_path=file_path,
+                ))
+
+
 class CodeAnalyzer:
-    """Advanced static code analysis for security threats"""
+    """Advanced static code analysis with pattern matching, AST analysis, and taint tracking."""
     
     def __init__(self):
         self.dangerous_patterns = [
@@ -232,21 +376,31 @@ class CodeAnalyzer:
         }
     
     async def analyze_file(self, file_path: Path) -> List[SecurityIssue]:
-        """Analyze single Python file for security issues"""
+        """Analyze single Python file for security issues.
+
+        Runs three analysis layers:
+        1. Pattern-based (regex against known dangerous patterns)
+        2. AST-based (structural analysis of the parse tree)
+        3. Import analysis (dangerous module detection)
+        4. Taint flow analysis (data flow from sources to sinks)
+        """
         issues = []
         
         try:
             async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
                 content = await f.read()
             
-            # Pattern-based analysis
             issues.extend(self._analyze_patterns(content, file_path))
-            
-            # AST-based analysis
             issues.extend(self._analyze_ast(content, file_path))
-            
-            # Import analysis
             issues.extend(self._analyze_imports(content, file_path))
+
+            try:
+                tree = ast.parse(content)
+                tracker = TaintTracker()
+                tainted_flows = tracker.analyze(tree, file_path)
+                issues.extend(flow.to_issue() for flow in tainted_flows)
+            except SyntaxError:
+                pass  # Already reported by _analyze_ast
             
         except Exception as e:
             issues.append(SecurityIssue(

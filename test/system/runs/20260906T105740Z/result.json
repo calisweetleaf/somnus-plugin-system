@@ -1,0 +1,134 @@
+{
+  "harness": "somnus-plugin-system production validation",
+  "timestamp": "20260906T105740Z",
+  "python_version": "3.12.3",
+  "checks": [
+    {
+      "name": "import_host_protocols",
+      "status": "pass",
+      "duration_ms": 1.3,
+      "detail": "all 7 protocol symbols present",
+      "extra": {}
+    },
+    {
+      "name": "import_plugin_base",
+      "status": "pass",
+      "duration_ms": 151.74,
+      "detail": "all 15 canonical types present",
+      "extra": {}
+    },
+    {
+      "name": "import_all_modules",
+      "status": "pass",
+      "duration_ms": 116.76,
+      "detail": "all 8 modules import cleanly",
+      "extra": {
+        "host_protocols": "pass",
+        "plugin_base": "pass",
+        "plugin_manager": "pass",
+        "security": "pass",
+        "discovery": "pass",
+        "orchestration": "pass",
+        "hot_reload": "pass",
+        "marketplace": "pass"
+      }
+    },
+    {
+      "name": "lineage_convergence",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "PluginPermission(8) and PluginType(8) canonical in plugin_base",
+      "extra": {}
+    },
+    {
+      "name": "capability_lattice",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "join(3), meet(1), universe(8), subsumes, gap \u2014 all correct",
+      "extra": {}
+    },
+    {
+      "name": "ewma_metrics",
+      "status": "pass",
+      "duration_ms": 0.02,
+      "detail": "EWMA mean=3.227, std=1.556, count=5",
+      "extra": {
+        "mean": 3.2269,
+        "std": 1.5562186189607166,
+        "min": 1.0,
+        "max": 5.0,
+        "count": 5.0
+      }
+    },
+    {
+      "name": "state_transitions",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "state graph has 18 valid edges across 8 states",
+      "extra": {}
+    },
+    {
+      "name": "content_addressed_checkpoint",
+      "status": "pass",
+      "duration_ms": 0.05,
+      "detail": "Merkle dedup works, hash=cdfa746d2bc62ee4..., checkpoint_id=ckpt_cdfa746d2bc62ee4_1",
+      "extra": {}
+    },
+    {
+      "name": "manifest_validation",
+      "status": "pass",
+      "duration_ms": 0.29,
+      "detail": "manifest validates, content_hash=39c46817531a9c12...",
+      "extra": {}
+    },
+    {
+      "name": "plugin_lifecycle_async",
+      "status": "fail",
+      "duration_ms": 0.43,
+      "detail": "exception: ",
+      "extra": {}
+    },
+    {
+      "name": "priority_queue_order",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "priority order correct: ['realtime', 'critical', 'high', 'normal', 'low']",
+      "extra": {}
+    },
+    {
+      "name": "security_import_fixed",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "security.py imports PluginPermission from plugin_base \u2014 the predicted ImportError at security.py:34 is resolved",
+      "extra": {}
+    },
+    {
+      "name": "hot_reload_no_pickle",
+      "status": "pass",
+      "duration_ms": 0.08,
+      "detail": "JSON-only deserialization, pickle payloads rejected",
+      "extra": {}
+    },
+    {
+      "name": "resource_monitor_real_measurement",
+      "status": "fail",
+      "duration_ms": 0.03,
+      "detail": "exception: name 'sys' is not defined",
+      "extra": {}
+    },
+    {
+      "name": "host_boundary_protocol_conformance",
+      "status": "pass",
+      "duration_ms": 0.03,
+      "detail": "runtime_checkable Protocol verification works for MemoryManager",
+      "extra": {}
+    }
+  ],
+  "summary": {
+    "pass_count": 13,
+    "fail_count": 2,
+    "skip_count": 0,
+    "total_duration_ms": 270.78,
+    "result": "FAIL"
+  }
+}

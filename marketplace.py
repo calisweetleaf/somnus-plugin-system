@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.exceptions import InvalidSignature
 
-from plugin_base import PluginManifest, PluginCapability
+from plugin_base import PluginManifest, PluginCapability, PluginPermission
 from security import SecurityManager, SecurityReport
 
 logger = logging.getLogger(__name__)

@@ -188,6 +188,25 @@ Recommended lookup order:
   remains **unobserved**
 - `2026-09-05` — full test suite — `NOT RUN` — no test suite exists in this repository
 
+## 2026-09-06 — PACKET-001/002/003 LANDED; SOTA++ INTEGRATION
+
+**Keys:** `PACKET-001` · `PACKET-002` · `PACKET-003` · `host_protocols` · `PluginPermission` · `PluginType` · `CapabilitySet` · `EWMA` · `Merkle` · `validate_system`
+
+- **State:** The codebase imports. All 8 modules (7 root + host_protocols) pass import checks.
+  The host boundary is realized via Protocol declaration. The lineage convergence is partial —
+  `PluginPermission` and `PluginType` are absorbed, but `plugin_manager.py` still defines its
+  own `PluginManifest`, `PluginBase`, `PluginDiscovery`, `PluginFileWatcher`.
+- **Changed:** `plugin_base.py` rewritten with SOTA++ features (capability lattice, EWMA metrics,
+  Merkle checkpoints, validated state machine, typed events, real resource monitoring).
+  `host_protocols.py` created. `security.py`, `discovery.py`, `orchestration.py`, `hot_reload.py`,
+  `marketplace.py`, `plugin_manager.py` updated for new imports. Defects D-001, D-002, D-011 fixed.
+  Pickle vulnerability removed. `validate_system.py` created with 15 checks, all PASS.
+- **Evidence:** `gate.sh` PASS (11 runnable), `validate_system.py` 15/15 PASS.
+- **Next read:** `STATE.md` for current runtime truth, `NOTEPAD.md` latest entry for the full
+  handoff block with proof facts.
+- **Open:** PACKET-002 completion (delete superseded types from plugin_manager), PACKET-004
+  (reference plugin).
+
 ---
 
 ## Context Maintenance Notes
