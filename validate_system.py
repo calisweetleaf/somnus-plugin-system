@@ -496,6 +496,40 @@ exec(processed)
                        detail="taint tracking: direct flow detected, safe code clean, propagation through assignment works")
 
 
+@timed_check("bloom_filter")
+def check_bloom_filter() -> CheckResult:
+    """Verify Bloom filter for rapid plugin negative lookups."""
+    from discovery import BloomFilter
+
+    bf = BloomFilter(expected_items=100, fp_rate=0.01)
+
+    test_items = [f"plugin_{i}" for i in range(100)]
+    for item in test_items:
+        bf.add(item)
+
+    for item in test_items:
+        assert item in bf, f"{item} should be in the filter"
+
+    false_positives = 0
+    test_negatives = 10000
+    for i in range(test_negatives):
+        if f"nonexistent_{i}" in bf:
+            false_positives += 1
+
+    fp_rate = false_positives / test_negatives
+    assert fp_rate < 0.05, f"false positive rate {fp_rate:.4f} too high (expected < 0.05)"
+
+    stats = bf.stats()
+    assert stats["items"] == 100
+    assert stats["estimated_fp_rate"] < 0.05
+
+    return CheckResult(name="", status="pass",
+                       detail=f"bloom filter: 100 items, 0 false negatives, "
+                              f"fp_rate={fp_rate:.4f} ({false_positives}/{test_negatives}), "
+                              f"bits={stats['bits']}, hashes={stats['hashes']}",
+                       extra=stats)
+
+
 @timed_check("circuit_breaker")
 def check_circuit_breaker() -> CheckResult:
     """Verify circuit breaker with exponential backoff and jitter."""
@@ -595,6 +629,7 @@ def main() -> int:
         check_hot_reload_no_pickle,
         check_resource_monitor,
         check_taint_tracking,
+        check_bloom_filter,
         check_circuit_breaker,
         check_protocol_conformance,
     ]

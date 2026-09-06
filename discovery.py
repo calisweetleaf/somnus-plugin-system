@@ -6,7 +6,10 @@ Advanced plugin detection, indexing, and dependency resolution with real-time mo
 import asyncio
 import hashlib
 import json
+import math
+import struct
 import time
+from array import array
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -24,6 +27,75 @@ from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreat
 from plugin_base import PluginManifest, PluginCapability, PluginType
 
 logger = logging.getLogger(__name__)
+
+
+class BloomFilter:
+    """Stdlib-only probabilistic membership test for rapid plugin lookups.
+
+    A Bloom filter provides O(1) membership testing with zero false negatives
+    and a tunable false positive rate. In the discovery engine, it enables
+    rapid negative answers to "does this plugin exist?" without scanning
+    the filesystem or the full index.
+
+    Uses double hashing (two independent hash functions combined via
+    h(i) = h1 + i*h2 mod m) to produce k hash positions from two base hashes.
+    """
+
+    def __init__(self, expected_items: int = 1000, fp_rate: float = 0.01) -> None:
+        self._n = max(expected_items, 1)
+        self._p = fp_rate
+        self._m = self._optimal_bits(self._n, self._p)
+        self._k = self._optimal_hashes(self._m, self._n)
+        self._bits = array("B", [0] * ((self._m + 7) // 8))
+        self._count = 0
+
+    @staticmethod
+    def _optimal_bits(n: int, p: float) -> int:
+        return max(64, int(-n * math.log(p) / (math.log(2) ** 2)))
+
+    @staticmethod
+    def _optimal_hashes(m: int, n: int) -> int:
+        return max(1, int(m / max(n, 1) * math.log(2)))
+
+    def _hash_pair(self, item: str) -> Tuple[int, int]:
+        """Produce two independent hash values via split SHA-256."""
+        digest = hashlib.sha256(item.encode()).digest()
+        h1 = struct.unpack_from("<Q", digest, 0)[0]
+        h2 = struct.unpack_from("<Q", digest, 8)[0]
+        return h1, h2
+
+    def add(self, item: str) -> None:
+        h1, h2 = self._hash_pair(item)
+        for i in range(self._k):
+            pos = (h1 + i * h2) % self._m
+            byte_idx, bit_idx = divmod(pos, 8)
+            self._bits[byte_idx] |= (1 << bit_idx)
+        self._count += 1
+
+    def __contains__(self, item: str) -> bool:
+        h1, h2 = self._hash_pair(item)
+        for i in range(self._k):
+            pos = (h1 + i * h2) % self._m
+            byte_idx, bit_idx = divmod(pos, 8)
+            if not (self._bits[byte_idx] & (1 << bit_idx)):
+                return False
+        return True
+
+    @property
+    def estimated_fp_rate(self) -> float:
+        """Estimated current false positive rate given items inserted."""
+        if self._count == 0:
+            return 0.0
+        return (1 - math.exp(-self._k * self._count / self._m)) ** self._k
+
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "bits": self._m,
+            "hashes": self._k,
+            "items": self._count,
+            "estimated_fp_rate": round(self.estimated_fp_rate, 6),
+            "bytes_used": len(self._bits),
+        }
 
 
 @dataclass
@@ -584,6 +656,7 @@ class PluginDiscovery:
         self.dependency_resolver = DependencyResolver()
         self.compatibility_checker = PluginCompatibilityChecker()
         self.scanner = PluginScanner()
+        self._bloom: BloomFilter = BloomFilter(expected_items=500, fp_rate=0.001)
         
         # File system monitoring
         self.file_watcher = PluginFileWatcher(self)
@@ -664,8 +737,9 @@ class PluginDiscovery:
                     
                     plugin_index.compatibility_score = score
                     
-                    if compatible or score > 0.5:  # Include partially compatible plugins
+                    if compatible or score > 0.5:
                         self.plugin_index[plugin_id] = plugin_index
+                        self._bloom.add(plugin_id)
                         discovered_plugins[plugin_id] = plugin_index.manifest
                         
                         # Update dependency graph
@@ -692,16 +766,26 @@ class PluginDiscovery:
         """Refresh plugin discovery cache"""
         logger.info("Refreshing plugin discovery cache")
         
-        # Clear cache
         self.plugin_index.clear()
         self.dependency_resolver = DependencyResolver()
         self.scanner.scan_cache.clear()
+        self._bloom = BloomFilter(expected_items=500, fp_rate=0.001)
         
         # Rediscover plugins
         await self.discover_plugins()
     
+    def plugin_exists(self, plugin_id: str) -> bool:
+        """Rapid probabilistic check for plugin existence via Bloom filter.
+
+        Returns False definitively (no false negatives). Returns True with
+        a tunable false positive rate (~0.1% at 500 plugins).
+        """
+        return plugin_id in self._bloom
+
     def get_plugin_path(self, plugin_id: str) -> Optional[Path]:
-        """Get path to plugin directory"""
+        """Get path to plugin directory."""
+        if plugin_id not in self._bloom:
+            return None  # definitive negative from Bloom filter
         plugin_index = self.plugin_index.get(plugin_id)
         return plugin_index.path if plugin_index else None
     
@@ -776,7 +860,8 @@ class PluginDiscovery:
                 'plugins_with_deps': 0,
                 'total_dependencies': 0,
                 'circular_dependencies': len(self.dependency_resolver._detect_cycles(set(self.plugin_index.keys())))
-            }
+            },
+            'bloom_filter': self._bloom.stats()
         }
         
         for plugin_index in self.plugin_index.values():
