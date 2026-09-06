@@ -208,3 +208,43 @@ Additional corrections from review, not from the cold agent:
 - **Open question the cold agent could not resolve, left open deliberately:** whether pydantic v1
   or v2 should be installed. `plugin_base.py:19` imports `validator` and `:136` calls `.dict()`,
   both deprecated in v2. Observing this is PACKET-001's job; pre-deciding it would be guessing.
+
+### 2026-09-05 21:30 CDT — Claude Code (Opus 5) — foreign artifact removal
+
+- **Base:** `b9586ea` (control plane committed as a recovery point).
+
+- **Did:** Removed the scaffolding a subagent created outside the approved plan —
+  `SCOPE.md`, `SOTA_RUN.md`, `requirements.txt`, `tools/`, `test/`, `snapshots/`. Operator ruled:
+  preserve in history first, then delete. Both were done, in that order.
+
+  **Reading the code before deleting it changed the record.** `tools/native/plugin/identifiers.py`
+  was not filler — 154 lines of frozen dataclasses, a compiled `SESSION_ID_PATTERN`, a
+  `TypedDict` payload, and a domain-specific error type, with a 354-line smoke harness beside it.
+  Its docstring stated the intent: *"Provide stdlib-first agnostic plugin identity value objects
+  that sever donor `schemas.session` coupling without adapter indirection."*
+
+  That is a **hard-ban-1 violation**. `schemas.session` is the host boundary, not a coupling to
+  be severed. The approach is attractive — stdlib-only, clean, and it makes `import plugin_base`
+  succeed — which is exactly why an agent optimizing for "make the imports work" will reinvent
+  it. A local `SessionID` satisfies the annotation but is not the host's `SessionID`; the
+  substrate would silently stop being embeddable, and the failure would surface at integration,
+  not at import. Recorded as a rejected path in `MEMORY.md` and as hazard key
+  `BOUNDARY-SEVERING`, so the next agent finds the reasoning rather than the temptation.
+
+- **Validation:**
+  - `bash gate.sh` section [5b] — **PASS** on both checks: no untracked `.py` outside the 7 known
+    modules; single dependency contract
+  - `ls tools test snapshots` — all absent
+  - Recovery verified available: `git show b9586ea:tools/native/plugin/identifiers.py`
+
+- **Proof facts:** 6 paths removed. `pyproject.toml` is now the sole dependency contract.
+  `gate.sh` [5b] guards against recurrence of both the stray-`.py` and the
+  competing-requirements-file failure modes.
+
+- **Surfaces synchronized:** `AUTHORITY_MAP.md` §6 · `STATE.md` §4 · `TASK.md` · `filetree.md` ·
+  `MEMORY.md` (new rejected-path entry + hazard index) · `NOTEPAD.md`
+
+- **Next agent:** Execute `packets/PACKET-001-dependency-and-import-truth.md`. Unchanged.
+
+- **Hazards:** none new. The `Explore`-can-write lesson stands in `CLAUDE.md` §3a and is now
+  mechanically guarded by `gate.sh` [5b] rather than only documented.

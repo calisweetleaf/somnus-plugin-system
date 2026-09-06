@@ -49,7 +49,7 @@ Recorded so they are not lost. Each needs a packet written before execution.
 | Orchestration defect sweep | Inverted priority queue, guaranteed shutdown `TypeError`, inert reactive mode, serial graph execution, hardcoded zero metrics | `docs/DEFECT_INDEX.md` D-001, D-002, D-009–D-014 (D-003–D-008 are marketplace, not orchestration) |
 | Resource limit enforcement | `memory_limit_mb` / `cpu_limit_percent` are validated and unenforceable | `OPSEC.md` SEC-09 |
 | `PluginSecurityManager` overlap | `plugin_manager.py:334` overlaps `security.py:609` in role, not implementation. PACKET-002 must rule | `MEMORY.md` → lineage ruling, Open threads |
-| Scaffolding artifact disposition | `SCOPE.md`, `SOTA_RUN.md`, `requirements.txt`, `tools/`, `test/`, `snapshots/` were created by a subagent on 2026-09-05 outside the approved plan. `requirements.txt` asserts "no third-party packages required", which contradicts `pyproject.toml`. **Operator decision required.** | `CLAUDE.md` §3a |
+| ~~Scaffolding artifact disposition~~ | **RESOLVED 2026-09-05.** Operator ruled: preserve in history, then delete. Preserved at `b9586ea`, removed in the following commit. `tools/native/plugin/identifiers.py` had attempted to sever the `schemas.session` host boundary — a hard-ban-1 violation. | `AUTHORITY_MAP.md` §6 |
 
 ---
 

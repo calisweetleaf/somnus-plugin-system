@@ -18,10 +18,8 @@
 > `git checkout`, `git stash`, or `git reset --hard` destroys all of it.** Commit before doing
 > anything destructive with git. `gate.sh` warns about this on every run.
 
-**Working tree:** control-plane documents added. **No tracked `.py` module was modified.** Two
-untracked `.py` files (`tools/native/plugin/__init__.py`, `tools/native/plugin/identifiers.py`)
-plus `test/plugin/smoke.py` were introduced by a subagent outside the approved plan — see §4 and
-`TASK.md`.
+**Working tree:** clean. Control plane committed at `b9586ea`; foreign scaffolding removed at
+the following commit. **No tracked `.py` module was ever modified.**
 
 ---
 
@@ -69,11 +67,10 @@ in this control plane is currently marked PREDICTED and needs to become OBSERVED
   boundary. See `HOST_BOUNDARY.md`.
 - **Do not trust `marketplace.py`'s signature verification.** `marketplace.py:346` compares a
   server-supplied hash to a locally computed SHA-256. See `OPSEC.md`.
-- **Do not `pip install -r requirements.txt`.** That file was created by a subagent outside the
-  approved plan and claims no third-party packages are required. `pyproject.toml` is the
-  dependency contract, and it declares nine. See `TASK.md`.
-- **Do not treat `tools/`, `test/`, `snapshots/`, `SCOPE.md`, or `SOTA_RUN.md` as this
-  repository's structure.** Same origin, operator decision pending.
+- **Do not recreate `requirements.txt`.** `pyproject.toml` is the dependency contract and
+  declares nine dependencies. A `requirements.txt` claiming otherwise was deleted 2026-09-05.
+- **Do not resurrect `tools/native/plugin/identifiers.py` from history.** It severed the
+  `schemas.session` host boundary, violating hard ban 1. See `AUTHORITY_MAP.md` §6.
 
 ---
 

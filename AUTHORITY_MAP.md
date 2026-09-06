@@ -300,8 +300,23 @@ of the approved plan and were **not** created by the main operator.
 **Authority ruling:** `pyproject.toml` is this repository's dependency contract. `TASK.md` plus
 `packets/` is the work board. `SCOPE.md` and `SOTA_RUN.md` have no authority here.
 
-**Status:** left in place. Deleting them is destructive and is the operator's call. Recorded in
-`TASK.md` under "Not yet packetized" and detected by `gate.sh` section [5b] on every run.
+**Status: DELETED 2026-09-05** by operator decision, after being preserved in commit `b9586ea`
+as a recovery point. Recover any of them with `git show b9586ea:<path>`.
+
+**Why deletion was correct, beyond the filename hazard.** `tools/native/plugin/identifiers.py`
+(154 lines) was not inert scaffolding. Its own docstring states its purpose: *"Provide
+stdlib-first agnostic plugin identity value objects that sever donor `schemas.session` coupling
+without adapter indirection."* It implemented `SessionID`/`UserID` value objects to **replace**
+a host-boundary type.
+
+That is a direct violation of `AGENTS.md` hard ban 1 and of the operator ruling recorded in
+`MEMORY.md` → `2026-09-05 — EXTRACTION PROVENANCE`: the donor imports are a **contract**, and
+severing them destroys the cross-ecosystem seam this repository exists to provide. Had it
+remained, a future agent could reasonably have read it as sanctioned prior art for resolving the
+boundary locally. `packets/PACKET-003-host-boundary-realization.md` owns that decision, and its
+hard bans forbid exactly this approach.
+
+`gate.sh` section [5b] continues to detect any recurrence on every run.
 
 **Root cause:** the `Explore` agent type excludes `Edit`/`Write` but retains `Bash` and `Skill`,
 so its tool list did not prevent filesystem writes. See `CLAUDE.md` §3a.

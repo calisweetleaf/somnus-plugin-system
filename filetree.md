@@ -74,14 +74,7 @@ somnus-plugin-system/
 │   └── templates/             agent_action/ api_extension/ basic_plugin/
 │                              ui_component/ workflow_node/ — all empty
 │
-└── ── UNAPPROVED SCAFFOLDING — operator decision pending, see TASK.md ──
-    ├── SCOPE.md               Created 2026-09-05 19:35 by a subagent, outside the approved plan
-    ├── SOTA_RUN.md            Same
-    ├── requirements.txt       Same. ** CONTRADICTS pyproject.toml ** — claims no third-party
-    │                          packages required. pyproject.toml is the dependency contract.
-    ├── tools/native/plugin/   Same. New source code: __init__.py, identifiers.py
-    ├── test/plugin/           Same. smoke.py + runs/
-    └── snapshots/v0.1/        Same. manifest.json
+└── (no foreign artifacts — the 2026-09-05 scaffolding was deleted; see AUTHORITY_MAP.md §6)
 ```
 
 ## Not tracked
@@ -97,5 +90,5 @@ somnus-plugin-system/
 - **`installed/templates/` and `installed/community/` assert a taxonomy no code reads.** They are
   empty directories.
 - **There is no `tests/` directory and no test suite**, by design. Validation here is
-  experimentation. `test/plugin/` in the unapproved block is not this repository's test harness.
+  experimentation, not pytest.
 - **Directory position implies nothing about authority.** Use `AUTHORITY_MAP.md`.

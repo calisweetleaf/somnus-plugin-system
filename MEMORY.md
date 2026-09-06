@@ -261,6 +261,54 @@ so no future agent re-adopts them.
 
 ---
 
+## 2026-09-05 — REJECTED PATH: SEVERING THE HOST BOUNDARY WITH LOCAL VALUE OBJECTS
+
+**Keys:** `host-boundary` · `schemas.session` · `SessionID` · `identifiers.py` · `hard-ban-1` · `rejected-path`
+
+**Status:** `FAILED` / `REJECTED` — recorded so it is not attempted again
+
+### Durable findings
+
+- During the control-plane session, a subagent's scaffolding skill produced
+  `tools/native/plugin/identifiers.py` (154 lines). It was competent code, not filler: frozen
+  dataclasses, a compiled `SESSION_ID_PATTERN`, a `TypedDict` payload, a domain-specific
+  `IdentifierValidationError`, and a 354-line smoke harness.
+- Its docstring stated the intent plainly: *"Provide stdlib-first agnostic plugin identity value
+  objects that sever donor `schemas.session` coupling without adapter indirection."*
+- **This is a hard-ban-1 violation.** `schemas.session` is not a coupling to be severed. It is
+  the host boundary — the seam by which this substrate attaches to an embedding system. See
+  `2026-09-05 — EXTRACTION PROVENANCE: THE DONOR BOUNDARY IS A CONTRACT, NOT A DEFECT`.
+- Deleted 2026-09-05 by operator decision, after preservation at commit `b9586ea`.
+
+### Interpretation / boundary
+
+- **Why this is worth recording rather than simply deleting:** the approach is *attractive*. It
+  makes `import plugin_base` succeed, it is stdlib-only, and it produces clean typed code. An
+  agent optimizing for "make the imports work" will reinvent it.
+- **Why it is wrong:** a local `SessionID` that satisfies the type annotation is not the host's
+  `SessionID`. Plugins would carry identity objects the embedding system does not recognize, and
+  the substrate would silently stop being embeddable — the exact property this repository exists
+  to have. The failure would be invisible until integration.
+- The legitimate strategies are enumerated in `HOST_BOUNDARY.md` section 4: protocol declaration,
+  host-supplied injection, or namespace package. All three keep the host as the source of the
+  concrete type. `packets/PACKET-003-host-boundary-realization.md` owns the choice.
+
+### Failures / rejected paths
+
+- **REJECTED — reimplement host types locally to make imports resolve.** Severs the
+  cross-ecosystem contract. Fails silently at integration time, not at import time.
+- **DO NOT** recover `identifiers.py` from history as prior art. `git show b9586ea:tools/native/plugin/identifiers.py`
+  exists for provenance only.
+
+### Retrieval anchors
+
+- `HOST_BOUNDARY.md` section 4 · `AUTHORITY_MAP.md` section 6
+- `AGENTS.md` section 9, hard ban 1
+- `packets/PACKET-003-host-boundary-realization.md` Hard Bans
+- Related memory: `2026-09-05 — EXTRACTION PROVENANCE`
+
+---
+
 ## 2026-09-05 — DOCTRINE SPECIALIZATION: NOTEPAD IS HISTORY, NEVER AUTHORITY
 
 **Keys:** `doctrine` · `source-hierarchy` · `NOTEPAD` · `STATE.md` · `CONTEXT.md` · `PLAN.md`
@@ -406,6 +454,8 @@ A generated map, a summary, or the router never owns behavior it merely describe
   SHA-256 and calls it signature verification. See `OPSEC.md` and `docs/DEFECT_INDEX.md` D-004.
 - `INHERITED-DOC-DRIFT` — extraction carried documentation forward while the code's context
   changed. Verify any inherited status claim against source. See `2026-09-05 — NEGATIVE KNOWLEDGE`.
+- `BOUNDARY-SEVERING` — reimplementing host types locally to make imports resolve is attractive,
+  clean, and wrong. See `2026-09-05 — REJECTED PATH: SEVERING THE HOST BOUNDARY`.
 - `ENV-NO-DEPS` — no `.venv`, no installed dependencies. Python 3.12.3 on the host. Nothing in
   this repository imports today. See `packets/PACKET-001-dependency-and-import-truth.md`.
 
