@@ -1,0 +1,4 @@
+{
+  "name": "somnus-plugin-system",
+  "install": "bash .cursor/install.sh"
+}
