@@ -2,72 +2,71 @@
 
 > **Charter:** single-screen current runtime truth. What is true *right now*.
 >
-> This file is deliberately narrow. It does not hold history (`NOTEPAD.md`), the dated index
-> (`CONTEXT.md`), durable rulings (`MEMORY.md`), or the contract (`SPEC.md`). It answers four
-> questions an arriving agent asks before anything else.
->
 > **Refresh on every state change.** A stale `STATE.md` is worse than none.
 
-**Last refreshed:** 2026-09-05
-**Extraction commit:** `5278e3c` (from the `somnus-os` donor codebase)
-**Control plane committed:** `b9586ea` (installed) → `ae5d1cf` (foreign scaffolding removed)
-**Working tree:** clean. **No tracked `.py` module has ever been modified in this repository.**
-
-> `gate.sh` prints the live HEAD and warns if the working tree has uncommitted paths. Trust the
-> gate over the commit hashes written above — this file is refreshed by hand and can drift.
+**Last refreshed:** 2026-09-06
+**Working tree:** uncommitted changes present — control plane documents being updated.
 
 ---
 
 ## 1. Does it run?
 
-**No.** Nothing in this repository imports today.
+**Yes.** All 8 modules import successfully (7 root modules + `host_protocols.py`).
 
-| Blocker | Detail | Status |
-|---|---|---|
-| Dependencies absent | No `.venv`. Required and missing: `pydantic`, `fastapi`, `aiofiles`, `aiohttp`, `watchdog`, `semver`, `importlib_metadata`. Present on host: `certifi`, `cryptography`. Host Python 3.12.3. | **OBSERVED** — `python3 -c "import plugin_base"` → `ModuleNotFoundError: No module named 'pydantic'` |
-| Missing symbol | `security.py:34` imports `PluginPermission` from `plugin_base`, which does not define it (only `plugin_manager.py:75` does). Cascades to `marketplace.py:28`. | **PREDICTED, NOT YET OBSERVED** — blocked behind the dependency failure |
-| Host boundary unresolved | `core.memory_core`, `schemas.session`, `core.security_layer` are supplied by the embedding system, absent here by design | **BY DESIGN** — see `HOST_BOUNDARY.md` |
+| Fact | Status |
+|---|---|
+| Dependencies installed | **OBSERVED** — `.venv` present, all 9 deps import |
+| All modules import | **OBSERVED** — `gate.sh` section 6 reports PASS for all 7 |
+| Host boundary resolved | **OBSERVED** — Protocol declaration strategy (HOST_BOUNDARY.md §4 option 1) via `host_protocols.py` |
+| Missing PluginPermission symbol | **RESOLVED** — absorbed from `plugin_manager.py` into `plugin_base.py` during lineage convergence |
+| Lineage convergence | **PARTIAL** — `PluginPermission` and `PluginType` absorbed. Duplicate class names still exist in `plugin_manager.py` (its own `PluginManifest`, `PluginBase`, `PluginDiscovery`, `PluginFileWatcher`). Gate reports 4 PENDING. |
+| Validation harness | **PASS** — 15/15 checks pass (`validate_system.py`) |
+| Gate | **PASS** on runnable checks. 6 PENDING (known work), 2 NOT RUN (missing prereqs). |
 
 ## 2. What is the gate posture?
 
-`bash gate.sh` → every dependency-gated check reports **`NOT RUN`**.
+`bash gate.sh` → **PASS** on 11 runnable checks. 6 PENDING. 2 NOT RUN.
 
-There is **no test suite** in this repository. No `tests/`, no pytest configuration, no CI.
-Per operator doctrine, validation here is experimentation, not a pytest suite. Do not
-manufacture a green check.
+The PENDING items are:
+- 4× duplicate class definitions (`PluginManifest`, `PluginBase`, `PluginDiscovery`, `PluginFileWatcher`) in `plugin_manager.py` — deletable once `plugin_manager.py`'s loader is re-based onto canonical lineage
+- 8 zero-byte files under `installed/example_plugin/` — PACKET-004 work
+- 1 untracked `.py` file (`validate_system.py`) — operator decision
+
+The NOT RUN items are:
+- Packet validation — `validate-packet.mjs` not present in cloud environment
+- Test suite — by design per AGENTS.md §7
 
 ## 3. What is the active packet?
 
-**`PACKET-001` — dependency and import truth.** See `TASK.md` and
-`packets/PACKET-001-dependency-and-import-truth.md`.
+**PACKET-001, PACKET-002, and PACKET-003 are landed.**
 
-It is the unblocking packet: every other packet is gated behind it, because every runtime claim
-in this control plane is currently marked PREDICTED and needs to become OBSERVED.
-
-| Packet | Status | Blocked on |
+| Packet | Status | Notes |
 |---|---|---|
-| `PACKET-001` dependency and import truth | **READY** | nothing |
-| `PACKET-002` lineage convergence | BLOCKED | 001 |
-| `PACKET-003` host boundary realization | BLOCKED | 001 |
-| `PACKET-004` reference plugin implementation | BLOCKED | 002 |
+| `PACKET-001` dependency and import truth | **LANDED** | .venv created, all modules import |
+| `PACKET-002` lineage convergence | **PARTIAL** | PluginPermission/PluginType absorbed, manifest narrowed. Superseded types still exist in plugin_manager.py |
+| `PACKET-003` host boundary realization | **LANDED** | Protocol declaration strategy via host_protocols.py |
+| `PACKET-004` reference plugin | BLOCKED | on full PACKET-002 completion |
 
-## 4. What must not be assumed?
+## 4. What SOTA++ improvements have landed?
 
-- **Do not assume the lineage convergence has happened.** `plugin_base.py` is *ruled* canonical;
-  the merge has **not** been executed. All seven name collisions still exist in source.
-- **Do not author a plugin against `plugin_base.PluginBase` and expect it to load.** The only
-  working loader gates on its own local `PluginBase` at `plugin_manager.py:701` and will reject it.
+| Feature | Module | Description |
+|---|---|---|
+| Protocol-based host boundary | `host_protocols.py` | `typing.Protocol` contracts for MemoryManager, SecurityEnforcer |
+| Capability lattice algebra | `plugin_base.py` | `CapabilitySet` with meet/join/complement/subsumes/gap |
+| Content-addressed checkpoints | `plugin_base.py` | Merkle-hashed state snapshots with deduplication |
+| EWMA metrics | `plugin_base.py` | Exponentially-weighted moving average for execution times |
+| Validated state machine | `plugin_base.py` | Directed graph of legal transitions, `InvalidStateTransition` |
+| Typed event bus | `plugin_base.py` | `PluginEventType` enum, frozen `PluginEvent` dataclass |
+| Real resource monitoring | `plugin_base.py` | stdlib `resource` module for actual RSS measurement |
+| Semver validation | `plugin_base.py` | `field_validator` on manifest version field |
+| D-001 fix | `orchestration.py` | Priority queue order corrected (REALTIME first) |
+| D-002 fix | `orchestration.py` | ThreadPoolExecutor.shutdown TypeError resolved |
+| D-011 fix | `orchestration.py` | CPU metrics estimated from execution time (was hardcoded 0.0) |
+| Pickle removal | `hot_reload.py` | JSON-only deserialization, pickle payloads rejected |
+
+## 5. What must not be assumed?
+
+- **Do not assume the full lineage convergence is complete.** `plugin_manager.py` still defines its own `PluginManifest`, `PluginBase`, `PluginDiscovery`, and `PluginFileWatcher`. These are the gate's 4 PENDING items. Deleting them requires re-basing the loader onto the canonical lineage.
+- **Do not author a plugin against `plugin_manager.PluginBase`.** It is superseded. Use `plugin_base.PluginBase`.
 - **Do not treat `installed/example_plugin/` as an example.** It is 14 files at 0 bytes.
-- **Do not resolve a donor import** by vendoring a stub or deleting it. That is the host
-  boundary. See `HOST_BOUNDARY.md`.
-- **Do not trust `marketplace.py`'s signature verification.** `marketplace.py:346` compares a
-  server-supplied hash to a locally computed SHA-256. See `OPSEC.md`.
-- **Do not recreate `requirements.txt`.** `pyproject.toml` is the dependency contract and
-  declares nine dependencies. A `requirements.txt` claiming otherwise was deleted 2026-09-05.
-- **Do not resurrect `tools/native/plugin/identifiers.py` from history.** It severed the
-  `schemas.session` host boundary, violating hard ban 1. See `AUTHORITY_MAP.md` §6.
-
----
-
-**Next surface:** `AGENTS.md` for routing · `TASK.md` for the board · `AUTHORITY_MAP.md` when a
-claim is in doubt.
+- **Do not enable the marketplace network path.** See `OPSEC.md`.
