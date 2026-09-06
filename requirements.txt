@@ -1,0 +1,2 @@
+# somnus-plugin-system root requirements
+# Slice 1 (plugin identifiers) is stdlib-first: no third-party packages required.

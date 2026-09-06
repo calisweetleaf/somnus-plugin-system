@@ -1,0 +1,19 @@
+# Environments
+/.venv/
+venv/
+
+# Tooling caches — not repository truth
+/.codegraph/
+/.commandcode/
+/.vscode/
+/.remember/
+/.python_doctor/
+__pycache__/
+*.py[cod]
+
+# Secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+id_rsa*

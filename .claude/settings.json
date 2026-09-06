@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(//home/daeron/LAB/Experiments/projects/somnus-plugin-system/**)",
+      "Edit(//home/daeron/LAB/Experiments/projects/somnus-plugin-system/**)",
+      "Write(//home/daeron/LAB/Experiments/projects/somnus-plugin-system/**)",
+
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed -n:*)",
+      "Bash(stat:*)",
+      "Bash(diff:*)",
+
+      "Bash(bash gate.sh)",
+      "Bash(./gate.sh)",
+      "Bash(node /home/daeron/.claude/skills/somnus-accelerate/scripts/validate-packet.mjs:*)",
+      "Bash(node /home/daeron/.claude/skills/somnus-accelerate/scripts/accelerate-probe.mjs:*)",
+
+      "Bash(python3 -m venv:*)",
+      "Bash(./.venv/bin/python:*)",
+      "Bash(./.venv/bin/pip:*)",
+      "Bash(python3 -c:*)",
+
+      "Bash(codegraph status:*)",
+      "Bash(codegraph query:*)",
+      "Bash(codegraph callers:*)",
+      "Bash(codegraph callees:*)",
+      "Bash(codegraph impact:*)",
+      "Bash(codegraph files:*)",
+      "Bash(codegraph sync:*)",
+      "Bash(codegraph index:*)",
+      "Bash(codegraph init:*)",
+
+      "Bash(somnus-debug structure:*)",
+      "Bash(somnus-debug --version)",
+      "Bash(somnus-debug --help)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(pip install:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git commit --no-verify:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa*)"
+    ]
+  }
+}

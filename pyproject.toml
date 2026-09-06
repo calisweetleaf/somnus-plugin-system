@@ -1,0 +1,62 @@
+# somnus-plugin-system — dependency contract
+#
+# This file DECLARES the dependency contract. It does not describe a distribution.
+# This package is designed to be embedded inside larger Somnus systems, not shipped
+# standalone. See HOST_BOUNDARY.md.
+#
+# No version pins. Per Codex Protocol, pins are added only when a genuine incompatibility
+# is observed and recorded with its traceback. PACKET-001 is the packet that would observe one.
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "somnus-plugin-system"
+version = "0.1.0"
+description = "Plugin substrate for the Somnus Sovereign Systems stack: contract, discovery, security analysis, execution orchestration, hot reload, and distribution."
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Daeron" }]
+
+# Derived from actual import statements across the 7 root modules.
+# Each entry names the file:line that requires it.
+dependencies = [
+  "pydantic",             # plugin_base.py:19, plugin_manager.py:41
+  "fastapi",              # plugin_base.py:20, plugin_manager.py:39-40
+  "aiofiles",             # plugin_manager.py:37, security.py:27
+  "aiohttp",              # marketplace.py:7
+  "watchdog",             # plugin_manager.py:42-43, discovery.py:21-22, hot_reload.py:31-32
+  "cryptography",         # security.py:28-32, marketplace.py:23-25
+  "semver",               # marketplace.py:19
+  "certifi",              # marketplace.py:21
+  "importlib_metadata",   # plugin_manager.py:38
+]
+
+[project.optional-dependencies]
+# plugin_manager.py:1047-1048 imports these inside its __main__ block only.
+serve = ["uvicorn"]
+
+# NOT declared here, and deliberately so — these are the HOST BOUNDARY, supplied by the
+# embedding system, never by pip. See HOST_BOUNDARY.md.
+#   core.memory_core     -> MemoryManager, MemoryType, MemoryImportance, MemoryScope
+#   schemas.session      -> SessionID, UserID
+#   core.security_layer  -> SecurityEnforcer
+
+[tool.setuptools]
+# Flat layout with several non-package directories at root (docs/, packets/, installed/,
+# test/, tools/, snapshots/). setuptools flat-layout auto-discovery errors on that ambiguity,
+# so packages is pinned empty and the modules are listed explicitly.
+packages = []
+
+# Flat layout, intentional. The 7 modules sit at the repository root because this package
+# is embedded as a subpackage of a larger system. Do not migrate to src/.
+py-modules = [
+  "plugin_base",
+  "plugin_manager",
+  "security",
+  "discovery",
+  "orchestration",
+  "hot_reload",
+  "marketplace",
+]
