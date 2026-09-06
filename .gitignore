@@ -2,6 +2,11 @@
 /.venv/
 venv/
 
+# Editable-install build metadata
+*.egg-info/
+build/
+dist/
+
 # Tooling caches — not repository truth
 /.codegraph/
 /.commandcode/
