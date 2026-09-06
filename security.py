@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.fernet import Fernet
 
-from plugin_base import PluginManifest, PluginPermission
+from plugin_base import PluginManifest, PluginPermission, PluginCapability
 
 logger = logging.getLogger(__name__)
 

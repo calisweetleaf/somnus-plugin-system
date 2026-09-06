@@ -17,7 +17,7 @@ import logging
 import uuid
 import weakref
 
-from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics
+from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics, PluginManifest
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,17 @@ class ExecutionMode(str, Enum):
 
 
 class ExecutionPriority(str, Enum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
-    CRITICAL = "critical"
+    """Execution priority levels, ordered from highest to lowest.
+
+    The iteration order matches dequeue priority — REALTIME dequeues first.
+    This fixes D-001 from the defect index where the original ordering was
+    inverted (LOW dequeued before REALTIME).
+    """
     REALTIME = "realtime"
+    CRITICAL = "critical"
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
 
 
 class WorkflowState(str, Enum):
@@ -253,7 +259,7 @@ class PluginExecutor:
             )
     
     def shutdown(self):
-        self.executor.shutdown(wait=True, timeout=30)
+        self.executor.shutdown(wait=True, cancel_futures=True)
 
 
 class WorkflowEngine:
@@ -629,11 +635,15 @@ class PluginOrchestrator:
                     else:
                         self._record_failure(request.plugin_id, result.error)
                     
+                    cpu_estimate = min(
+                        result.execution_time / max(asyncio.get_event_loop().time(), 0.001) * 100.0,
+                        100.0,
+                    )
                     self.resource_monitor.record_execution(
                         request.plugin_id,
                         result.memory_used,
-                        0.0,  # CPU usage would be calculated here
-                        result.execution_time
+                        cpu_estimate,
+                        result.execution_time,
                     )
                     
                 except Exception as e:

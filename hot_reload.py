@@ -31,7 +31,7 @@ from enum import Enum
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
 
-from core.memory_core import MemoryManager, MemoryType, MemoryImportance
+from host_protocols import MemoryManager, MemoryType, MemoryImportance
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,12 @@ class PluginState:
     serialization_format: str = "json"  # json, pickle, custom
     
     def serialize(self) -> bytes:
-        """Serialize state for persistence"""
+        """Serialize state for persistence. JSON-only — pickle is excluded
+        because it enables arbitrary code execution during deserialization."""
         if self.serialization_format == "pickle":
-            return pickle.dumps(self)
-        else:
-            # JSON serialization with datetime handling
+            self.serialization_format = "json"  # force safe serialization
+        # JSON serialization with datetime handling
+        if True:
             data = {
                 'plugin_id': self.plugin_id,
                 'version': self.version,
@@ -88,12 +89,13 @@ class PluginState:
     
     @classmethod
     def deserialize(cls, data: bytes) -> 'PluginState':
-        """Deserialize state from persistence"""
+        """Deserialize state from persistence.
+
+        JSON-only deserialization. pickle.loads is deliberately excluded
+        because it executes arbitrary code — a plugin could craft a
+        serialized state payload that runs during deserialization.
+        """
         try:
-            # Try pickle first
-            return pickle.loads(data)
-        except:
-            # Fall back to JSON
             json_data = json.loads(data.decode('utf-8'))
             return cls(
                 plugin_id=json_data['plugin_id'],
@@ -107,6 +109,8 @@ class PluginState:
                 created_at=datetime.fromisoformat(json_data.get('created_at', datetime.now(timezone.utc).isoformat())),
                 serialization_format=json_data.get('serialization_format', 'json')
             )
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise ValueError(f"Failed to deserialize plugin state: {exc}") from exc
 
 
 class DependencyGraph:

@@ -21,7 +21,7 @@ import sys
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
 
-from plugin_base import PluginManifest, PluginCapability
+from plugin_base import PluginManifest, PluginCapability, PluginType
 
 logger = logging.getLogger(__name__)
 
@@ -495,8 +495,8 @@ class PluginScanner:
                     return cached_index
             
             # Load and validate manifest
-            async with open(manifest_path, 'r') as f:
-                manifest_data = json.loads(await f.read())
+            with open(manifest_path, 'r') as f:
+                manifest_data = json.loads(f.read())
             
             manifest = PluginManifest(**manifest_data)
             
@@ -555,8 +555,8 @@ class PluginScanner:
                 
                 # For small files, add content
                 if file_path.stat().st_size < 10240:  # 10KB
-                    async with open(file_path, 'rb') as f:
-                        content = await f.read()
+                    with open(file_path, 'rb') as f:
+                        content = f.read()
                     hasher.update(content)
                 
             except (OSError, IOError):
