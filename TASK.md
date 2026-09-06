@@ -7,9 +7,7 @@
 > Complete / 2-4 hours remaining" claims are disproven. See `MEMORY.md` →
 > `2026-09-05 — NEGATIVE KNOWLEDGE: DISPROVEN INHERITED CLAIMS`.
 
-**HEAD:** `924594f` · **Extraction commit:** `5278e3c` · **Board refreshed:** 2026-09-05
-
-> The control plane is **uncommitted working-tree state**. See `STATE.md`.
+**Extraction commit:** `5278e3c` · **Control plane:** `b9586ea` → `ae5d1cf` · **Board refreshed:** 2026-09-05
 
 ---
 

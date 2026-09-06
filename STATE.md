@@ -9,17 +9,12 @@
 > **Refresh on every state change.** A stale `STATE.md` is worse than none.
 
 **Last refreshed:** 2026-09-05
-**HEAD:** `924594f` · **Extraction commit:** `5278e3c` (from the `somnus-os` donor codebase)
+**Extraction commit:** `5278e3c` (from the `somnus-os` donor codebase)
+**Control plane committed:** `b9586ea` (installed) → `ae5d1cf` (foreign scaffolding removed)
+**Working tree:** clean. **No tracked `.py` module has ever been modified in this repository.**
 
-> **THE CONTROL PLANE IS UNCOMMITTED.** Everything described below — the router, this file,
-> `SPEC.md`, `MEMORY.md`, the packets, `.claude/` — exists only as working-tree state. `HEAD`
-> (`924594f`) still contains the pre-repair state: byte-identical `AGENTS.md`/`CLAUDE.md` twins,
-> placeholder `CONTEXT.md`/`MEMORY.md`, and the 436-line foreign `NOTEPAD.md`. **A
-> `git checkout`, `git stash`, or `git reset --hard` destroys all of it.** Commit before doing
-> anything destructive with git. `gate.sh` warns about this on every run.
-
-**Working tree:** clean. Control plane committed at `b9586ea`; foreign scaffolding removed at
-the following commit. **No tracked `.py` module was ever modified.**
+> `gate.sh` prints the live HEAD and warns if the working tree has uncommitted paths. Trust the
+> gate over the commit hashes written above — this file is refreshed by hand and can drift.
 
 ---
 
