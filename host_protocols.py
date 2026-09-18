@@ -206,9 +206,9 @@ class MemoryManager(Protocol):
 class SecurityEnforcer(Protocol):
     """Protocol for the host-supplied security enforcement layer.
 
-    Currently consumed only by plugin_manager.py's PluginSecurityManager.
-    Whether this dependency survives the lineage convergence is decided by
-    PACKET-002. Defined here for completeness of the boundary contract.
+    Consumed by PluginManager. PACKET-002 ruled that SecurityEnforcer survives
+    as the host runtime-policy surface. Static analysis is security.SecurityManager.
+    PACKET-005 binds this protocol through the capability façade.
     """
 
     async def validate_action(

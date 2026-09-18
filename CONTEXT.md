@@ -209,6 +209,17 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — AUTHORITY CONVERGENCE; ONE HEARTBEAT
+
+**Keys:** `PACKET-002` · `PACKET-004` · `PACKET-005` · `example_plugin` · `plugin_identity` · `production_load_path`
+
+- **State:** The loader runs the canonical lineage. Gate duplicate-class PENDING items are gone.
+  19/19 harness PASS is component checks plus one production path — not adversarial coverage.
+- **Next read:** `STATE.md`, `packets/PACKET-005-execution-boundary.md`
+- **Open:** capability façade, transactional install/reload, truth harness.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

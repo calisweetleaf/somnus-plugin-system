@@ -1,0 +1,2 @@
+# Reference plugin declares no extra Python packages.
+# Runtime dependencies are supplied by the host embedding the substrate.

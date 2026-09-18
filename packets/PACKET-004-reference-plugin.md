@@ -1,7 +1,7 @@
 # PACKET-004 — Reference Plugin Implementation
 
 **Owner:** next executing agent
-**Status:** QUEUED
+**Status:** LANDED
 **Depends on:** PACKET-002
 **Size:** one session
 **Priority:** medium — the contract has no worked example

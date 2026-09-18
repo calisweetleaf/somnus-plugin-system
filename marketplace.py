@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.exceptions import InvalidSignature
 
-from plugin_base import PluginManifest, PluginCapability, PluginPermission
+from plugin_base import PluginManifest, PluginCapability, PluginPermission, plugin_identity
 from security import SecurityManager, SecurityReport
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class MarketplaceProvider(str, Enum):
     PRIVATE = "private"
 
 
-class PluginStatus(str, Enum):
+class ListingStatus(str, Enum):
     DRAFT = "draft"
     PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
@@ -90,7 +90,7 @@ class PluginListing:
     plugin_id: str
     manifest: PluginManifest
     provider: MarketplaceProvider
-    status: PluginStatus
+    status: ListingStatus
     channel: DistributionChannel
     
     download_url: str
@@ -404,7 +404,7 @@ class RegistryClient:
             plugin_id=data.get('plugin_id', manifest.name),
             manifest=manifest,
             provider=MarketplaceProvider(data.get('provider', 'community')),
-            status=PluginStatus(data.get('status', 'approved')),
+            status=ListingStatus(data.get('status', 'approved')),
             channel=DistributionChannel(data.get('channel', 'public')),
             download_url=data.get('download_url', ''),
             signature_url=data.get('signature_url'),
@@ -565,7 +565,9 @@ class PluginInstaller:
             import shutil
             shutil.move(str(plugin_dir), str(target_dir))
             
-            success = await self.plugin_manager.load_plugin(manifest.name)
+            success = await self.plugin_manager.load_plugin(
+                plugin_identity(manifest.name, manifest.version)
+            )
             if success:
                 logger.info(f"Successfully installed plugin from archive: {manifest.name}")
                 return True, "Installation completed successfully"

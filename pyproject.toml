@@ -59,4 +59,5 @@ py-modules = [
   "orchestration",
   "hot_reload",
   "marketplace",
+  "host_protocols",
 ]

@@ -297,3 +297,27 @@ Additional corrections from review, not from the cold agent:
 - **Hazards:** `plugin_manager.py`'s loader at `:701` still gates on its local `PluginBase`.
   Until that gate is re-based, plugins authored against the canonical `plugin_base.PluginBase`
   are rejected by the only working loader.
+
+### 2026-09-18 23:15 UTC — Stilgar (Cursor Grok 4.6) — Authority Convergence
+
+- Base: `82dab8d`
+- Did: Completed PACKET-002 remainder and PACKET-004. Gutted duplicate types from
+  `plugin_manager.py`. Loader imports canonical `PluginBase` / `PluginManifest`,
+  `discovery.PluginDiscovery`, `security.SecurityManager`. Populated
+  `installed/example_plugin/`. Checkpoint hashing now uses canonical plugin-owned
+  state and returns the stored id on duplicate content.
+- Validation:
+  - `.venv/bin/python validate_system.py` — 19/19 PASS including `production_load_path`
+  - `bash gate.sh` — PASS, 0 PENDING, 2 NOT RUN
+  - `grep ^class PluginManifest|PluginBase|PluginDiscovery|PluginFileWatcher` — exactly one each
+- Proof facts:
+  - Production path loaded `example_plugin_1.0.0` as `plugin_base.PluginBase`
+  - Duplicate checkpoint returned the same id and restore succeeded
+  - FastAPI route wrapper binds `original_endpoint` per iteration
+  - `SecurityEnforcer` retained on `PluginManager`; `PluginSecurityManager` deleted
+  - Permissions remain descriptive until PACKET-005
+- Surfaces synchronized: SPEC.md, HOST_BOUNDARY.md, OPSEC.md, AUTHORITY_MAP.md,
+  STATE.md, TASK.md, AGENTS.md, packets 001-007, NOTEPAD.md
+- Next agent: Execute PACKET-005 execution boundary.
+- Hazards: in-process `exec_module` still has host privileges; marketplace extractall
+  still unsafe; hot reload still in-place.

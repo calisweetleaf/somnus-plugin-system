@@ -11,14 +11,17 @@
 
 ## 0. Status of this contract
 
-This specification describes the **target** contract. Part of it is live in source today and
-part of it lands in `packets/PACKET-002-lineage-convergence.md`. Every clause is marked:
+This specification describes the **live** contract after PACKET-002 and PACKET-004.
 
-- **LIVE** — implemented in source now, at the cited line.
-- **PENDING-002** — ruled, specified, not yet in source. Do not assume it works.
+- **LIVE** — implemented in source now, at the cited surface.
+- **PENDING-005** — execution boundary (capability façade, graduated domains).
+- **PENDING-006** — transactional lifecycle (staged install, generation reload, host route).
+- **PENDING-007** — adversarial truth harness.
 
-An agent authoring a plugin **today** must read §7 before writing anything, because the only
-working loader still gates against the superseded base class.
+An agent authoring a plugin **today** subclasses `plugin_base.PluginBase`, implements the
+four `_plugin_*` hooks, and loads through `PluginManager.load_plugin()`. The superseded
+manager-local base class has been deleted. Permissions are still **descriptive** until
+PACKET-005.
 
 ---
 
@@ -26,19 +29,23 @@ working loader still gates against the superseded base class.
 
 | Concern | Canonical surface | Status |
 |---|---|---|
-| Manifest schema | `plugin_base.py:79` `PluginManifest` (pydantic `BaseModel`) | LIVE |
-| Capability taxonomy | `plugin_base.py:28` `PluginCapability` | LIVE |
-| Lifecycle states | `plugin_base.py:40` `PluginState` | LIVE |
-| Runtime context | `plugin_base.py:53` `PluginContext` | LIVE |
-| Runtime metrics | `plugin_base.py:67` `PluginMetrics` | LIVE |
-| Base class | `plugin_base.py:230` `PluginBase` | LIVE |
-| Permission taxonomy | `PluginPermission`, moving from `plugin_manager.py:75` into `plugin_base.py` | PENDING-002 |
-| Type taxonomy | `PluginType`, moving from `plugin_manager.py:63` into `plugin_base.py` | PENDING-002 |
-| Loader | `load_plugin`, moving from `plugin_manager.py:668` onto the canonical base | PENDING-002 |
-| API mounting | `_register_plugin_api`, moving from `plugin_manager.py:763` | PENDING-002 |
+| Manifest schema | `plugin_base.PluginManifest` (pydantic `BaseModel`) | LIVE |
+| Capability taxonomy | `plugin_base.PluginCapability` | LIVE |
+| Lifecycle states | `plugin_base.PluginState` | LIVE |
+| Runtime context | `plugin_base.PluginContext` | LIVE |
+| Runtime metrics | `plugin_base.PluginMetrics` | LIVE |
+| Base class | `plugin_base.PluginBase` | LIVE |
+| Permission taxonomy | `plugin_base.PluginPermission` | LIVE |
+| Type taxonomy | `plugin_base.PluginType` | LIVE |
+| Plugin identity | `plugin_base.plugin_identity(name, version)` → `{name}_{version}` | LIVE |
+| Discovery | `discovery.PluginDiscovery` | LIVE |
+| Static security | `security.SecurityManager` | LIVE |
+| Loader | `plugin_manager.PluginManager.load_plugin` | LIVE |
+| API mounting | `plugin_manager.PluginManager._register_plugin_api` | LIVE |
+| Reference plugin | `installed/example_plugin/` | LIVE |
 
-**Superseded and scheduled for deletion in PACKET-002:** `plugin_manager.py`'s `PluginManifest`
-(88), `PluginBase` (147), `PluginDiscovery` (498), `PluginFileWatcher` (446), `PluginStatus` (52).
+**Deleted by PACKET-002:** manager-local `PluginManifest`, `PluginBase`, `PluginDiscovery`,
+`PluginFileWatcher`, `PluginStatus`, `PluginPermission`, `PluginType`, `PluginSecurityManager`.
 
 ---
 
@@ -59,9 +66,7 @@ defaults and silently accepted anything.
 | `author` | `str` | 84 |
 | `plugin_type` | `str` | 85 |
 
-**Known contract weakness:** `plugin_type` is typed as a bare `str` here, while the superseded
-lineage typed it as the `PluginType` enum (`plugin_manager.py:66`). PACKET-002 narrows this
-field to `PluginType`. Until then any string validates.
+`plugin_type` is `PluginType`. `permissions` is `List[PluginPermission]`. Malformed values raise.
 
 ### Advanced capabilities — 4 fields
 
@@ -91,10 +96,9 @@ field to `PluginType`. Until then any string validates.
 | `signature` | `Optional[str]` | `None` | — | 103 |
 | `security_level` | `int` | `1` | `ge=1, le=5` | 104 |
 
-**PENDING-002:** `permissions` is narrowed from free-form `List[str]` to
-`List[PluginPermission]`. `security.py` already consumes it as the enum (`:220`, `:223`,
-`:226`, `:229`, `:419`, `:433`, `:703-705`) — the type is the thing that is missing, not the
-intent.
+**LIVE.** `permissions` is `List[PluginPermission]`. Enforcement of those permissions as
+object capabilities lands in PACKET-005. Until then the field is descriptive metadata
+consumed by static analysis.
 
 ### Integration points — 5 fields
 
@@ -153,15 +157,14 @@ touch. Do not conflate them.
 
 ## 4. Permission taxonomy — `PluginPermission`
 
-Currently `plugin_manager.py:75-84`. **PENDING-002** — moves into `plugin_base.py`. Eight values.
+`plugin_base.py`. **LIVE.** Eight values.
 
 `read_memory` · `write_memory` · `network_access` · `file_system` · `system_commands` ·
 `user_interface` · `session_access` · `agent_control`
 
 ## 5. Type taxonomy — `PluginType`
 
-Currently `plugin_manager.py:63-72`. **PENDING-002** — moves into `plugin_base.py` and becomes
-the type of the `plugin_type` manifest field. Eight values.
+`plugin_base.py`. **LIVE.** Eight values. The `plugin_type` manifest field is this enum.
 
 `api_extension` · `ui_component` · `agent_action` · `memory_extension` · `workflow_node` ·
 `tool_integration` · `research_module` · `creative_engine`
@@ -223,8 +226,10 @@ ABCs that nothing implements. `PluginBase` (`:230`) inherits only `PluginInterfa
 
 ## 7. Loader contract — read this before authoring
 
-Currently `plugin_manager.py:668-809`. **PENDING-002** for re-basing; the mechanism itself is
-LIVE and is what actually loads plugins today.
+`plugin_manager.PluginManager.load_plugin`. **LIVE** on the canonical lineage.
+
+Discovery keys plugins as `{name}_{version}` via `plugin_identity()`. The loader
+`issubclass` gate resolves `PluginBase` to `plugin_base.PluginBase`.
 
 ### Plugin module
 
@@ -287,9 +292,9 @@ conventional, not functional. Treat them as reserved surface.
 Discovery keys plugins as `f"{name}_{version}"` and reads `manifest.json` per subdirectory
 (`plugin_manager.py:498-564`).
 
-`installed/example_plugin/` currently matches this layout with **every file at 0 bytes**. It is
-a skeleton, not a reference. A real reference implementation lands in
-`packets/PACKET-004-reference-plugin.md`.
+`installed/example_plugin/` is the live reference. Runtime id: `example_plugin_1.0.0`.
+It subclasses `plugin_base.PluginBase`, exports `router` from `api/__init__.py`, and
+loads through `PluginManager.load_plugin()`.
 
 ---
 

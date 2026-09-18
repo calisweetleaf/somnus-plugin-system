@@ -36,23 +36,22 @@ lowers exposure. It does not make a checksum into a signature.
 | Manifest schema validation | `plugin_base.py:79` pydantic | **Real, but unreachable** until dependencies are installed. |
 | Regex blocklist scan | `plugin_manager.py:334` `PluginSecurityManager` | **Real but shallow** — substring/regex matching on `__import__`, `eval`, `exec`, `open`, `subprocess.`, `os.system`, `os.popen`. Trivially evaded by string construction. Superseded lineage. |
 
-**Current state: none of the above executes**, because `security.py` cannot be imported. See §3.
+**Current state (2026-09-18):** `security.py` imports. `PluginManager.load_plugin` calls
+`SecurityManager.validate_plugin` on the production path. Sandbox construction still does
+not wrap module import — that is PACKET-005. Marketplace extract-then-validate remains
+SEC-05. Permissions remain descriptive until the capability façade lands.
 
 ---
 
 ## 3. Active security findings
 
-### SEC-01 — `security.py` cannot be imported — **CRITICAL, blocks all enforcement**
+### SEC-01 — `security.py` cannot be imported — **RESOLVED**
 
-`security.py:34` imports `PluginPermission` from `plugin_base`, which does not define it
-(`plugin_manager.py:75` does). The symbol is consumed at `security.py:220`, `:223`, `:226`,
-`:229`, `:419`, `:433`, `:703-705`.
+`PluginPermission` lives in `plugin_base.py`. `import security` succeeds. The production
+loader calls `SecurityManager.validate_plugin`. Historical claim that the symbol was
+missing is stale; do not revive it.
 
-**Consequence: the entire code-analysis and sandboxing layer is unreachable.** Any plugin
-loading that happens today happens with no security analysis whatsoever.
-
-*Status:* grep-verified absent. `ImportError` **PREDICTED, NOT YET OBSERVED** — dependency
-install is the prerequisite. *Fix lands in:* PACKET-002.
+*Residual:* analysis is static. Runtime isolation is PACKET-005.
 
 ### SEC-02 — Signature verification is a checksum — **HIGH**
 
@@ -138,10 +137,11 @@ validated on input and not enforced at runtime. `orchestration.py:635` hardcodes
 
 A resource-exhaustion plugin is currently unconstrained by these fields.
 
-### SEC-10 — Signature verification stub returns True — **MEDIUM, superseded lineage**
+### SEC-10 — Signature verification stub returns True — **RESOLVED by deletion**
 
-`plugin_manager.py:426-430` — the superseded lineage's signature verification is a stub that
-**always returns `True`**. Scheduled for deletion in PACKET-002. Do not carry it forward.
+`PluginSecurityManager` and its always-true `_verify_signature` were deleted in PACKET-002.
+Signature checking on the load path is `security.SecurityManager._verify_plugin_signature`
+when a signature is present and security level is HIGH.
 
 ---
 
@@ -156,8 +156,9 @@ A resource-exhaustion plugin is currently unconstrained by these fields.
 - **Never commit a real private key or a real trust root to this repository.** The placeholder
   at `marketplace.py:839-842` must be replaced by host-supplied configuration, not by a
   committed key.
-- **Assume plugin code is hostile** until `security.py` is importable and its analysis actually
-  runs. Today it does not run.
+- **Assume plugin code is hostile.** Static analysis now runs on load. Runtime isolation
+  and object-capability permissions land in PACKET-005. Do not treat a passing scan as a
+  sandbox.
 
 ---
 

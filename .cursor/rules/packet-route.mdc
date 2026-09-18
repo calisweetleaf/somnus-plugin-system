@@ -1,0 +1,13 @@
+---
+description: Packet execution route for somnus-plugin-system
+alwaysApply: true
+---
+
+# Packet route
+
+- Route from `TASK.md` and `AGENTS.md`, never from `filetree.md`.
+- Active packets live in `packets/` and carry Mission, Required Reads, Invariant, Surfaces, Hard Bans, Validation, Exit, Handoff.
+- Live source outranks every document. When they disagree, repair the document in the same turn.
+- After a state-changing turn: append `NOTEPAD.md`, refresh `STATE.md`, append `CONTEXT.md`, update `MEMORY.md` and `TASK.md`.
+- The gate is `bash gate.sh`. Record `NOT RUN` when a prerequisite is absent.
+- One branch / one pull request from `main` unless the operator says otherwise.

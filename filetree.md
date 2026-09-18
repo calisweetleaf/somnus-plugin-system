@@ -1,8 +1,8 @@
 # File Tree — somnus-plugin-system
 
-**Generated:** 2026-09-06
+**Generated:** 2026-09-18
 **Root:** somnus-plugin-system
-**Base commit:** `5278e3c` (extraction) → SOTA++ integration pass
+**Base commit:** `82dab8d` → authority convergence (`cursor/plugin-runtime-heartbeat-863f`)
 
 > **Whole-codebase awareness, not dispatch.** Consult this when regaining orientation, after a
 > focused read sequence, or after structural change. **Do not route the active task from it** —
@@ -36,7 +36,7 @@ somnus-plugin-system/
 │
 ├── host_protocols.py          HOST BOUNDARY — Protocol contracts for embedding system
 ├── plugin_base.py     750+L   CANONICAL — manifest, capabilities, lifecycle, base class
-├── plugin_manager.py 1055 L   SUPERSEDED — holds the only loader + FastAPI mount
+├── plugin_manager.py          LOADER — canonical PluginManager over plugin_base/discovery/security
 ├── security.py        914 L   Trust boundary: AST analysis, sandbox, crypto validation
 ├── discovery.py       824 L   Discovery, dependency graph, topological resolution
 ├── orchestration.py   734 L   Priority-queued async dispatch, workflow interpretation
@@ -49,10 +49,13 @@ somnus-plugin-system/
 │   └── DEFECT_INDEX.md        EVIDENCE — 22 verified defects, D-001..D-022
 │
 ├── packets/
-│   ├── PACKET-001-dependency-and-import-truth.md    ACTIVE  — unblocks everything
-│   ├── PACKET-002-lineage-convergence.md            QUEUED  — blocked on 001
-│   ├── PACKET-003-host-boundary-realization.md      QUEUED  — blocked on 001
-│   └── PACKET-004-reference-plugin.md               QUEUED  — blocked on 002
+│   ├── PACKET-001-dependency-and-import-truth.md    LANDED
+│   ├── PACKET-002-lineage-convergence.md            LANDED
+│   ├── PACKET-003-host-boundary-realization.md      LANDED
+│   ├── PACKET-004-reference-plugin.md               LANDED
+│   ├── PACKET-005-execution-boundary.md             ACTIVE
+│   ├── PACKET-006-transactional-lifecycle.md        QUEUED
+│   └── PACKET-007-truth-harness.md                  QUEUED
 │
 ├── .claude/
 │   ├── settings.json                        Permissions derived from THIS layout
@@ -62,7 +65,7 @@ somnus-plugin-system/
 │       └── host-boundary-validator.md       Read-only donor-seam guard
 │
 ├── installed/                 Plugin installation root
-│   ├── example_plugin/        ** 14 FILES, ALL 0 BYTES ** — skeleton, NOT a reference
+│   ├── example_plugin/        LIVE reference — plugin_base.PluginBase, id example_plugin_1.0.0
 │   │   ├── manifest.json      0 B      → PACKET-004 populates this
 │   │   ├── plugin.py          0 B
 │   │   ├── __init__.py        0 B

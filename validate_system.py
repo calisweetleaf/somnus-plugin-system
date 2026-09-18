@@ -115,8 +115,11 @@ def check_import_all_modules() -> CheckResult:
 
 @timed_check("lineage_convergence")
 def check_lineage_convergence() -> CheckResult:
-    """Verify PluginPermission and PluginType live in plugin_base, not only plugin_manager."""
-    from plugin_base import PluginPermission, PluginType
+    """Verify canonical types exist once and the loader imports them."""
+    from plugin_base import PluginBase, PluginManifest, PluginPermission, PluginType
+    import plugin_manager
+    import discovery
+    import inspect
 
     perm_values = {e.value for e in PluginPermission}
     expected_perms = {"read_memory", "write_memory", "network_access", "file_system",
@@ -132,8 +135,21 @@ def check_lineage_convergence() -> CheckResult:
         return CheckResult(name="", status="fail",
                            detail=f"PluginType values mismatch: {type_values} vs {expected_types}")
 
+    if inspect.getmodule(plugin_manager.PluginBase) is not inspect.getmodule(PluginBase):
+        return CheckResult(name="", status="fail",
+                           detail="plugin_manager.PluginBase is not the canonical class")
+    if inspect.getmodule(plugin_manager.PluginManifest) is not inspect.getmodule(PluginManifest):
+        return CheckResult(name="", status="fail",
+                           detail="plugin_manager.PluginManifest is not the canonical class")
+    if plugin_manager.PluginDiscovery is not discovery.PluginDiscovery:
+        return CheckResult(name="", status="fail",
+                           detail="plugin_manager.PluginDiscovery is not discovery.PluginDiscovery")
+    if hasattr(plugin_manager, "PluginSecurityManager"):
+        return CheckResult(name="", status="fail",
+                           detail="PluginSecurityManager still exists on plugin_manager")
+
     return CheckResult(name="", status="pass",
-                       detail="PluginPermission(8) and PluginType(8) canonical in plugin_base")
+                       detail="canonical types unique; loader imports plugin_base and discovery")
 
 
 @timed_check("capability_lattice")
@@ -358,7 +374,7 @@ def check_plugin_lifecycle_async() -> CheckResult:
 
     result = asyncio.run(run_lifecycle())
 
-    expected_events = ["initialized", "activated", "checkpoint_created", "checkpoint_created", "terminated"]
+    expected_events = ["initialized", "activated", "checkpoint_created", "terminated"]
     if result["events"] != expected_events:
         return CheckResult(name="", status="fail",
                            detail=f"events mismatch: {result['events']} vs {expected_events}")
@@ -410,7 +426,7 @@ def check_security_import() -> CheckResult:
 @timed_check("hot_reload_no_pickle")
 def check_hot_reload_no_pickle() -> CheckResult:
     """Verify hot_reload.py does not use pickle for deserialization."""
-    from hot_reload import PluginState as HRPluginState
+    from hot_reload import PluginRuntimeSnapshot as HRPluginState
 
     state = HRPluginState(plugin_id="test", version="1.0.0")
     serialized = state.serialize()
@@ -423,7 +439,7 @@ def check_hot_reload_no_pickle() -> CheckResult:
     import pickle
     malicious = pickle.dumps({"should": "not", "be": "loaded"})
     try:
-        HRPluginState.deserialize(malicious)
+        HRPluginState.deserialize(malicious)  # type: ignore[arg-type]
         return CheckResult(name="", status="fail", detail="pickle payload should not deserialize")
     except (ValueError, Exception):
         pass
@@ -596,6 +612,127 @@ def check_protocol_conformance() -> CheckResult:
                        detail="runtime_checkable Protocol verification works for MemoryManager")
 
 
+class HarnessMemoryRecord:
+    """Search result object with .metadata for checkpoint restore."""
+
+    def __init__(self, content: str, metadata: Dict[str, Any]) -> None:
+        self.content = content
+        self.metadata = metadata
+        self.memory_id = metadata.get("checkpoint_id", "")
+
+
+class HarnessMemoryManager:
+    """Protocol-conforming embedding-host stand-in used only by this harness."""
+
+    def __init__(self) -> None:
+        self.records: List[Dict[str, Any]] = []
+
+    async def create_context(self, context_id, scope, metadata=None):
+        return {"context_id": context_id, "scope": getattr(scope, "value", scope)}
+
+    async def store_memory(self, user_id, content, memory_type, importance,
+                           scope=None, tags=None, metadata=None):
+        from uuid import uuid4
+        record = {
+            "user_id": user_id,
+            "content": content,
+            "metadata": metadata or {},
+            "memory_id": str(uuid4()),
+        }
+        self.records.append(record)
+        return uuid4()
+
+    async def retrieve_memories(self, user_id, query, memory_types=None, limit=10):
+        return [r for r in self.records if query in r["content"] or query in str(r["metadata"])][:limit]
+
+    async def search_memories(self, user_id, query, memory_type=None, limit=10):
+        matches = [r for r in self.records if query in r["content"] or query in str(r["metadata"])]
+        return [HarnessMemoryRecord(r["content"], r["metadata"]) for r in matches[:limit]]
+
+
+class HarnessSecurityEnforcer:
+    """Protocol-conforming host security stand-in used only by this harness."""
+
+    async def validate_action(self, action, context):
+        return True
+
+    async def enforce_policy(self, policy_name, subject, resource):
+        return True
+
+
+@timed_check("production_load_path")
+def check_production_load_path() -> CheckResult:
+    """Drive a canonical plugin through PluginManager.load_plugin().
+
+    This is a production-path proof, not another component check. It does not
+    claim adversarial coverage.
+    """
+    from fastapi import FastAPI
+    from plugin_base import PluginBase, plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("example_plugin", "1.0.0")
+
+    async def run_path() -> Dict[str, Any]:
+        app = FastAPI()
+        memory = HarnessMemoryManager()
+        enforcer = HarnessSecurityEnforcer()
+        manager = PluginManager(
+            app,
+            memory,
+            enforcer,
+            plugin_base_dir=PROJECT_ROOT,
+        )
+        await manager.discover_and_load_plugins()
+        if plugin_id not in manager.active_plugins:
+            return {
+                "ok": False,
+                "detail": f"plugin {plugin_id} not loaded; have {list(manager.active_plugins)}",
+            }
+        plugin = manager.active_plugins[plugin_id]
+        if not isinstance(plugin, PluginBase):
+            return {"ok": False, "detail": "loaded instance is not plugin_base.PluginBase"}
+        pinged = await plugin.ping(note="production-path")
+        first = await plugin.checkpoint_state()
+        second = await plugin.checkpoint_state()
+        restored = await plugin.restore_checkpoint(first)
+        unloaded = await manager.unload_plugin(plugin_id)
+        return {
+            "ok": True,
+            "plugin_id": plugin_id,
+            "class": plugin.__class__.__name__,
+            "canonical": True,
+            "ping": pinged,
+            "checkpoint_id": first,
+            "deduped_checkpoint_id": second,
+            "same_id_on_duplicate": first == second,
+            "restored": restored,
+            "unloaded": unloaded,
+        }
+
+    outcome = asyncio.run(run_path())
+    if not outcome.get("ok"):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    if not outcome["same_id_on_duplicate"]:
+        return CheckResult(
+            name="",
+            status="fail",
+            detail=f"duplicate checkpoint returned new id {outcome['deduped_checkpoint_id']} vs {outcome['checkpoint_id']}",
+        )
+    if not outcome["restored"]:
+        return CheckResult(name="", status="fail", detail="restore_checkpoint failed for stored id")
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=(
+            f"production path: discover→security→load {outcome['plugin_id']} "
+            f"as {outcome['class']}, ping={outcome['ping']['pings']}, "
+            f"checkpoint {outcome['checkpoint_id']}, restore, unload"
+        ),
+        extra=outcome,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -632,6 +769,7 @@ def main() -> int:
         check_bloom_filter,
         check_circuit_breaker,
         check_protocol_conformance,
+        check_production_load_path,
     ]
 
     results: List[CheckResult] = []

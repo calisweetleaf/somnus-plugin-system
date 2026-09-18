@@ -110,7 +110,7 @@ class WorkflowExecution:
     context: Dict[str, Any] = field(default_factory=dict)
 
 
-class ResourceMonitor:
+class WorkflowResourceMonitor:
     def __init__(self):
         self.memory_usage: Dict[str, int] = {}
         self.cpu_usage: Dict[str, float] = {}
@@ -573,7 +573,7 @@ class PluginOrchestrator:
         self.execution_queue = ExecutionQueue()
         self.executor = PluginExecutor()
         self.workflow_engine = WorkflowEngine()
-        self.resource_monitor = ResourceMonitor()
+        self.resource_monitor = WorkflowResourceMonitor()
         
         self.is_running = False
         self.worker_tasks: List[asyncio.Task] = []

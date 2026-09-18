@@ -34,16 +34,15 @@ trajectory is deliberate over-engineering: strict deep integration, no thin adap
 
 | Fact | Status |
 |---|---|
-| Does it run? | **No.** Nothing in this repository imports today. |
-| Why | No dependencies installed, no `.venv`. Host is Python 3.12.3. |
-| Deeper blocker | `security.py:34` imports a symbol `plugin_base.py` does not define. **PREDICTED, not yet observed.** |
-| Architectural fact | Two rival plugin lineages shared this directory. `plugin_base.py` is **ruled canonical**; the merge has **not** been executed. |
-| Active packet | `PACKET-001` — dependency and import truth. Unblocks everything. |
-| Test suite | **Does not exist.** No `tests/`, no pytest config, no CI. |
-| Gate | `bash gate.sh` — reports `NOT RUN` for every dependency-gated check. |
+| Does it run? | **Yes.** All 8 modules import. The production loader loads `example_plugin_1.0.0`. |
+| Host boundary | `host_protocols.py` Protocol seam. Zero donor `core`/`schemas` imports. |
+| Lineage | `plugin_base.py` is canonical **in source**. Duplicate manager types deleted. |
+| Active packet | `PACKET-005` — execution boundary. Permissions are still descriptive. |
+| Validation | `validate_system.py` — component checks plus one production-path check. Not adversarial. |
+| Gate | `bash gate.sh` — PASS on runnable checks; 0 PENDING. |
 
-**Landed** this session: the control plane below. **Not landed:** any source change. The lineage
-convergence is specified, not executed.
+**Landed:** PACKET-001 through PACKET-004. **Not landed:** capability façade, transactional
+install/reload, adversarial harness.
 
 ---
 
