@@ -321,3 +321,25 @@ Additional corrections from review, not from the cold agent:
 - Next agent: Execute PACKET-005 execution boundary.
 - Hazards: in-process `exec_module` still has host privileges; marketplace extractall
   still unsafe; hot reload still in-place.
+
+### 2026-09-18 23:20 UTC — Stilgar (Cursor Grok 4.6) — Execution Boundary
+
+- Base: `1d5e07b`
+- Did: Landed PACKET-005. `HostCapabilityFacade` is the only MemoryManager a
+  plugin receives. `agent_actions` is the orchestrator allow-list. Isolated
+  plugins import in `plugin_worker.worker_entry` after sandbox staging.
+  In-process timeouts record `NOT TERMINABLE`. Isolated timeouts terminate
+  the worker PID. Orchestrator CPU is sampled over the request window.
+- Validation:
+  - `.venv/bin/python validate_system.py` — 22/22 PASS
+  - Isolated hang killed pid 3867; crash stayed in the worker
+  - Verified probe denied `store_memory` with `CapabilityDenied`
+- Proof facts:
+  - `example_plugin_1.0.0` loaded HOST_INTEGRATED with a façade
+  - `verified_probe_1.0.0` domain VERIFIED; WRITE_MEMORY absent
+  - `isolated_probe_1.0.0` / `isolated_crash_1.0.0` never host-imported
+- Surfaces synchronized: SPEC.md, OPSEC.md, STATE.md, TASK.md, AGENTS.md,
+  filetree.md, packets/PACKET-005
+- Next agent: Execute PACKET-006 transactional lifecycle.
+- Hazards: marketplace extractall still unsafe; hot reload still in-place;
+  FastAPI still mutates route endpoints.

@@ -1,7 +1,7 @@
 # PACKET-005 — Execution Boundary
 
 **Owner:** next executing agent
-**Status:** IN_PROGRESS
+**Status:** LANDED
 **Depends on:** PACKET-002, PACKET-004
 **Size:** one session
 **Priority:** high — permissions must become policy

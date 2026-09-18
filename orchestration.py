@@ -13,13 +13,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Callable, Union, Tuple
 import logging
 import uuid
 import weakref
 
-from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics, PluginManifest
+from plugin_base import ActionNotExported, ExportedAction, PluginBase, PluginState, PluginContext, PluginMetrics, PluginManifest
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class ExecutionResult:
     execution_time: float = 0.0
     memory_used: int = 0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    termination: str = ""
 
 
 @dataclass
@@ -212,31 +214,33 @@ class PluginExecutor:
         
     async def execute_plugin_method(self, plugin: PluginBase, request: ExecutionRequest) -> ExecutionResult:
         start_time = time.time()
+        termination = ""
         
         try:
             async with self.execution_semaphore:
-                if not hasattr(plugin, request.method_name):
-                    raise AttributeError(f"Plugin {plugin.plugin_id} has no method {request.method_name}")
-                
-                method = getattr(plugin, request.method_name)
-                
-                if asyncio.iscoroutinefunction(method):
-                    if request.timeout:
-                        result = await asyncio.wait_for(
-                            method(*request.args, **request.kwargs),
-                            timeout=request.timeout
+                action = plugin.get_exported_action(request.method_name) if hasattr(plugin, "get_exported_action") else None
+                if action is None:
+                    raise ActionNotExported(plugin.plugin_id, request.method_name)
+
+                if hasattr(plugin, "call_action") and hasattr(plugin, "terminate_worker"):
+                    try:
+                        result = await plugin.call_action(
+                            request.method_name,
+                            *request.args,
+                            timeout=request.timeout,
+                            **request.kwargs,
                         )
-                    else:
-                        result = await method(*request.args, **request.kwargs)
+                    except TimeoutError as exc:
+                        termination = "worker_terminated"
+                        raise exc
                 else:
-                    loop = asyncio.get_event_loop()
-                    if request.timeout:
-                        result = await asyncio.wait_for(
-                            loop.run_in_executor(self.executor, method, *request.args),
-                            timeout=request.timeout
+                    handler = action.handler if isinstance(action, ExportedAction) else action
+                    result = await self._invoke_in_process(plugin, handler, request)
+                    if result is _NOT_TERMINABLE:
+                        termination = "NOT TERMINABLE"
+                        raise TimeoutError(
+                            f"in-process timeout for {plugin.plugin_id}.{request.method_name}; NOT TERMINABLE"
                         )
-                    else:
-                        result = await loop.run_in_executor(self.executor, method, *request.args)
                 
                 execution_time = time.time() - start_time
                 
@@ -245,23 +249,49 @@ class PluginExecutor:
                     plugin_id=plugin.plugin_id,
                     success=True,
                     result=result,
-                    execution_time=execution_time
+                    execution_time=execution_time,
+                    termination=termination,
                 )
                 
         except Exception as e:
             execution_time = time.time() - start_time
             logger.error(f"Plugin execution failed: {plugin.plugin_id}.{request.method_name}: {e}")
+            if "NOT TERMINABLE" in str(e):
+                termination = "NOT TERMINABLE"
             
             return ExecutionResult(
                 request_id=request.request_id,
                 plugin_id=plugin.plugin_id,
                 success=False,
                 error=e,
-                execution_time=execution_time
+                execution_time=execution_time,
+                termination=termination,
             )
-    
+
+    async def _invoke_in_process(self, plugin: PluginBase, handler: Callable, request: ExecutionRequest) -> Any:
+        if asyncio.iscoroutinefunction(handler):
+            coro = handler(*request.args, **request.kwargs)
+            if request.timeout:
+                try:
+                    return await asyncio.wait_for(coro, timeout=request.timeout)
+                except asyncio.TimeoutError:
+                    return _NOT_TERMINABLE
+            return await coro
+
+        loop = asyncio.get_running_loop()
+        bound = partial(handler, *request.args, **request.kwargs)
+        if request.timeout:
+            try:
+                return await asyncio.wait_for(loop.run_in_executor(self.executor, bound), timeout=request.timeout)
+            except asyncio.TimeoutError:
+                return _NOT_TERMINABLE
+        return await loop.run_in_executor(self.executor, bound)
+
     def shutdown(self):
         self.executor.shutdown(wait=True, cancel_futures=True)
+
+
+_NOT_TERMINABLE = object()
 
 
 class WorkflowEngine:
@@ -735,17 +765,18 @@ class PluginOrchestrator:
                 )
             else:
                 try:
+                    cpu_start = time.process_time()
+                    wall_start = time.monotonic()
                     result = await self.executor.execute_plugin_method(plugin, request)
+                    wall = max(time.monotonic() - wall_start, 0.001)
+                    cpu_used = max(time.process_time() - cpu_start, 0.0)
+                    cpu_estimate = min((cpu_used / wall) * 100.0, 100.0)
                     
                     if result.success:
                         self._record_success(request.plugin_id)
                     else:
                         self._record_failure(request.plugin_id, result.error)
                     
-                    cpu_estimate = min(
-                        result.execution_time / max(asyncio.get_event_loop().time(), 0.001) * 100.0,
-                        100.0,
-                    )
                     self.resource_monitor.record_execution(
                         request.plugin_id,
                         result.memory_used,

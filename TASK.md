@@ -9,12 +9,11 @@
 
 ## Active
 
-### `PACKET-005` — Execution Boundary · READY · blocked on nothing
+### `PACKET-006` — Transactional Lifecycle · READY · blocked on nothing
 
-Permissions become object-capability policy. Graduated execution domains. Exported
-actions. Isolated worker for untrusted plugins.
+Staged zip-safe install, blue/green generations, stable host route.
 
-→ `packets/PACKET-005-execution-boundary.md`
+→ `packets/PACKET-006-transactional-lifecycle.md`
 
 ---
 
@@ -22,7 +21,6 @@ actions. Isolated worker for untrusted plugins.
 
 | Packet | Mission | Status | Blocked on |
 |---|---|---|---|
-| `PACKET-006` | Transactional lifecycle — staged install, generation reload, host route | QUEUED | 005 |
 | `PACKET-007` | Truth harness — adversarial E2E + mechanical STATE | QUEUED | 006 |
 
 ---
@@ -35,6 +33,7 @@ actions. Isolated worker for untrusted plugins.
 | PACKET-002 lineage convergence | LANDED 2026-09-18 |
 | PACKET-003 host boundary realization | LANDED |
 | PACKET-004 reference plugin | LANDED 2026-09-18 |
+| PACKET-005 execution boundary | LANDED 2026-09-18 |
 
 ---
 

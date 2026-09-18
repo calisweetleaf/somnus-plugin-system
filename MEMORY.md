@@ -473,6 +473,20 @@ A generated map, a summary, or the router never owns behavior it merely describe
   `validate_system.py` check `production_load_path`.
 - Permissions remain descriptive until PACKET-005.
 
+## 2026-09-18 — EXECUTION BOUNDARY LANDED
+
+**Keys:** `PACKET-005` · `HostCapabilityFacade` · `ExecutionDomain` · `IsolatedPluginHandle`
+
+- No plugin receives a raw ambient `MemoryManager` from the loader.
+- Missing permission is absence of the object.
+- Domain: trusted or `security_level<=2` → HOST_INTEGRATED; `>=4` untrusted →
+  ISOLATED; else VERIFIED.
+- Isolated plugins that fail the host-integrated safety bar still load in a
+  worker. CRITICAL issues remain a refusal class.
+- `agent_actions` is the only orchestrator invocation namespace.
+- In-process timeouts cannot kill a Python thread; they record `NOT TERMINABLE`.
+- Isolated timeouts terminate the worker.
+
 ---
 
 ## Memory Maintenance Notes

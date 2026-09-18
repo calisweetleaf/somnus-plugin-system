@@ -27,7 +27,7 @@ echo "=============================================================="
 echo
 echo "[1] Structural integrity"
 
-EXPECTED_MODULES="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols"
+EXPECTED_MODULES="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker"
 missing=""
 for m in $EXPECTED_MODULES; do [ -f "$m.py" ] || missing="$missing $m.py"; done
 if [ -z "$missing" ]; then ok "all expected root modules present"
@@ -51,9 +51,9 @@ else
   bad "host boundary drift: donor imports reappeared ($DONOR_COUNT)"
   printf '%s\n' "$DONOR" | sed 's/^/           /'
 fi
-HOST_SITES=$(grep -n '^from host_protocols import' plugin_base.py plugin_manager.py hot_reload.py 2>/dev/null || true)
+HOST_SITES=$(grep -n '^from host_protocols import' plugin_base.py plugin_manager.py hot_reload.py host_capabilities.py 2>/dev/null || true)
 HOST_COUNT=$(printf '%s' "$HOST_SITES" | grep -c . || true)
-if [ "$HOST_COUNT" -ge 3 ]; then
+if [ "$HOST_COUNT" -ge 4 ]; then
   ok "host_protocols Protocol seam present ($HOST_COUNT import sites)"
 else
   bad "host_protocols seam missing or incomplete ($HOST_COUNT sites)"
@@ -103,10 +103,10 @@ fi
 # ------------------------------------------------- foreign artifact drift
 echo
 echo "[5b] Foreign artifact drift"
-KNOWN="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols validate_system"
+KNOWN="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker validate_system"
 STRAY=""
 for f in $(git ls-files --others --exclude-standard -- '*.py' 2>/dev/null); do
-  case "$f" in installed/*) continue ;; esac
+  case "$f" in installed/*|test/harness_plugins/*|test/system/runs/*) continue ;; esac
   base=$(basename "$f" .py); hit=0
   for k in $KNOWN; do [ "$base" = "$k" ] && hit=1; done
   [ "$hit" -eq 0 ] && STRAY="$STRAY $f"

@@ -220,6 +220,17 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — EXECUTION BOUNDARY LANDED
+
+**Keys:** `PACKET-005` · `HostCapabilityFacade` · `ExecutionDomain` · `IsolatedPluginHandle` · `ExportedAction` · `NOT TERMINABLE`
+
+- **State:** Permissions are object-capability policy. Isolated plugins import
+  in a worker. 22/22 harness PASS is still not adversarial coverage.
+- **Next read:** `STATE.md`, `packets/PACKET-006-transactional-lifecycle.md`
+- **Open:** staged install, blue/green generations, host-owned route, truth harness.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

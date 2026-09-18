@@ -31,12 +31,14 @@ somnus-plugin-system/
 │
 ├── pyproject.toml             Dependency contract (9 deps, no pins)
 ├── gate.sh                    Validation entrypoint — honest, reports NOT RUN
-├── validate_system.py         Production validation harness (15 checks)
+├── validate_system.py         Production validation harness (component + production + domain)
 ├── python_production_doctor.py  Somnus diagnostic toolkit
 │
 ├── host_protocols.py          HOST BOUNDARY — Protocol contracts for embedding system
-├── plugin_base.py     750+L   CANONICAL — manifest, capabilities, lifecycle, base class
-├── plugin_manager.py          LOADER — canonical PluginManager over plugin_base/discovery/security
+├── host_capabilities.py       Object-capability façade + execution domains
+├── plugin_worker.py           Isolated worker process + parent handle
+├── plugin_base.py             CANONICAL — manifest, lifecycle, exported actions
+├── plugin_manager.py          LOADER — façade assembly, domain-aware load
 ├── security.py        914 L   Trust boundary: AST analysis, sandbox, crypto validation
 ├── discovery.py       824 L   Discovery, dependency graph, topological resolution
 ├── orchestration.py   734 L   Priority-queued async dispatch, workflow interpretation
@@ -53,8 +55,8 @@ somnus-plugin-system/
 │   ├── PACKET-002-lineage-convergence.md            LANDED
 │   ├── PACKET-003-host-boundary-realization.md      LANDED
 │   ├── PACKET-004-reference-plugin.md               LANDED
-│   ├── PACKET-005-execution-boundary.md             ACTIVE
-│   ├── PACKET-006-transactional-lifecycle.md        QUEUED
+│   ├── PACKET-005-execution-boundary.md             LANDED
+│   ├── PACKET-006-transactional-lifecycle.md        ACTIVE
 │   └── PACKET-007-truth-harness.md                  QUEUED
 │
 ├── .claude/
@@ -81,6 +83,7 @@ somnus-plugin-system/
 │                              ui_component/ workflow_node/ — all empty
 │
 ├── test/
+│   ├── harness_plugins/       verified_probe, isolated_probe, isolated_crash
 │   └── system/
 │       └── runs/                  Timestamped validation harness results
 │           └── <timestamp>/       result.json, result.md per run

@@ -11,17 +11,17 @@
 
 ## 0. Status of this contract
 
-This specification describes the **live** contract after PACKET-002 and PACKET-004.
+This specification describes the **live** contract after PACKET-005.
 
 - **LIVE** — implemented in source now, at the cited surface.
-- **PENDING-005** — execution boundary (capability façade, graduated domains).
 - **PENDING-006** — transactional lifecycle (staged install, generation reload, host route).
 - **PENDING-007** — adversarial truth harness.
 
 An agent authoring a plugin **today** subclasses `plugin_base.PluginBase`, implements the
-four `_plugin_*` hooks, and loads through `PluginManager.load_plugin()`. The superseded
-manager-local base class has been deleted. Permissions are still **descriptive** until
-PACKET-005.
+four `_plugin_*` hooks, declares `agent_actions`, and loads through
+`PluginManager.load_plugin()`. The third constructor argument is a
+`HostCapabilityFacade`, not a raw host `MemoryManager`. Permissions are
+object-capability policy.
 
 ---
 
@@ -43,6 +43,10 @@ PACKET-005.
 | Loader | `plugin_manager.PluginManager.load_plugin` | LIVE |
 | API mounting | `plugin_manager.PluginManager._register_plugin_api` | LIVE |
 | Reference plugin | `installed/example_plugin/` | LIVE |
+| Capability façade | `host_capabilities.HostCapabilityFacade` | LIVE |
+| Execution domain | `host_capabilities.select_execution_domain` | LIVE |
+| Isolated worker | `plugin_worker.IsolatedPluginHandle` | LIVE |
+| Exported actions | `plugin_base.ExportedAction` | LIVE |
 
 **Deleted by PACKET-002:** manager-local `PluginManifest`, `PluginBase`, `PluginDiscovery`,
 `PluginFileWatcher`, `PluginStatus`, `PluginPermission`, `PluginType`, `PluginSecurityManager`.
@@ -96,9 +100,19 @@ defaults and silently accepted anything.
 | `signature` | `Optional[str]` | `None` | — | 103 |
 | `security_level` | `int` | `1` | `ge=1, le=5` | 104 |
 
-**LIVE.** `permissions` is `List[PluginPermission]`. Enforcement of those permissions as
-object capabilities lands in PACKET-005. Until then the field is descriptive metadata
-consumed by static analysis.
+**LIVE.** `permissions` is `List[PluginPermission]`. The loader assembles a
+`HostCapabilityFacade` from this list. A missing permission is the **absence of
+the capability object**, not a flag the plugin is trusted to honor.
+
+Domain selection (`host_capabilities.select_execution_domain`):
+
+- `trusted=True` or `security_level <= 2` → `HOST_INTEGRATED`
+- `security_level >= 4` and not trusted → `ISOLATED`
+- otherwise → `VERIFIED`
+
+`HOST_INTEGRATED` and `VERIFIED` stay in-process. `ISOLATED` imports `plugin.py`
+only inside `plugin_worker.worker_entry`. All three receive a façade. None
+receive a raw ambient `MemoryManager`.
 
 ### Integration points — 5 fields
 
@@ -110,8 +124,11 @@ consumed by static analysis.
 | `workflow_nodes` | `List[str]` | `[]` | 110 |
 | `memory_extensions` | `List[str]` | `[]` | 111 |
 
-**These five fields are declared and read by no loader code path.** Repository-wide grep finds
-only their declarations. See §6.
+`agent_actions` is the invocation allow-list. `PluginBase` binds declared names
+to handlers at construction. `orchestration.PluginExecutor.execute_plugin_method`
+dispatches only registered actions — `initialize`, `_plugin_*`, and other
+lifecycle methods are refused. API endpoint descriptors remain unread until
+PACKET-006 owns host routing.
 
 ### Resource requirements — 4 fields
 
@@ -122,9 +139,10 @@ only their declarations. See §6.
 | `network_access_required` | `bool` | `False` | — | 116 |
 | `file_system_access` | `List[str]` | `[]` | — | 117 |
 
-**Enforcement note:** `cpu_limit_percent` is currently unenforceable. `orchestration.py:635`
-hardcodes CPU usage to `0.0`, so `ResourceMonitor.check_resource_limits` (`:124`) can never
-trip its CPU branch (`:132`). See `docs/DEFECT_INDEX.md` D-011.
+**Enforcement note:** orchestrator CPU is sampled over the request window
+(`time.process_time()` / `time.monotonic()`), not `loop.time()` since process
+start. In-process domains cannot kill a Python thread on timeout — they cancel
+the await and record `NOT TERMINABLE`. Isolated timeouts terminate the worker.
 
 ### Metadata — 5 fields
 
@@ -229,29 +247,25 @@ ABCs that nothing implements. `PluginBase` (`:230`) inherits only `PluginInterfa
 `plugin_manager.PluginManager.load_plugin`. **LIVE** on the canonical lineage.
 
 Discovery keys plugins as `{name}_{version}` via `plugin_identity()`. The loader
-`issubclass` gate resolves `PluginBase` to `plugin_base.PluginBase`.
+`issubclass` gate resolves `PluginBase` to `plugin_base.PluginBase` for
+in-process domains. Isolated plugins never enter host `exec_module`.
 
 ### Plugin module
 
-`_load_plugin_module` (`:730-761`) uses `importlib.util.spec_from_file_location` against
-`plugin.py`. The module **must** expose a module-level class named exactly `Plugin`:
+In-process load uses `importlib.util.spec_from_file_location` against `plugin.py`.
+The module **must** expose a module-level class named exactly `Plugin` that
+subclasses `plugin_base.PluginBase`. Construction is:
 
 ```python
-plugin_class = getattr(plugin_module, 'Plugin', None)          # plugin_manager.py:700
-if not plugin_class or not issubclass(plugin_class, PluginBase):  # :701
-    return False
-plugin_instance = plugin_class(plugin_id, manifest, self.memory_manager)  # :706
+facade = HostCapabilityFacade(host_memory, security_enforcer, manifest, plugin_id)
+plugin_instance = plugin_class(plugin_id, manifest, facade)
 ```
 
-> **LOAD-BEARING HAZARD.** The `issubclass` check at `:701` resolves `PluginBase` to the
-> **superseded** local class at `plugin_manager.py:147` — not the canonical
-> `plugin_base.PluginBase` at `:230`. **A plugin authored against this specification is
-> rejected by the current loader.** This is the single edge PACKET-002 exists to remove.
-> Until it lands, authoring against §6 produces a plugin that validates and does not load.
+The third argument is the façade. Isolated load stages a copy into a
+`SecurityManager.create_sandbox` tree and starts `IsolatedPluginHandle`.
 
-Construction is three positional arguments: `(plugin_id, manifest, memory_manager)`. The
-canonical `PluginBase.__init__` (`plugin_base.py:236-240`) accepts a fourth,
-`consciousness_level=0.0`, defaulted — so the three-argument call site remains compatible.
+`HOST_INTEGRATED` / `VERIFIED` timeouts cancel the await and record
+`NOT TERMINABLE`. Isolated timeouts terminate the worker PID.
 
 ### API extension
 

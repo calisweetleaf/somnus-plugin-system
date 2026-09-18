@@ -1,0 +1,16 @@
+{
+  "name": "verified_probe",
+  "version": "1.0.0",
+  "description": "Verified-domain harness plugin that must be denied WRITE_MEMORY.",
+  "author": "Somnus MAIL-Room",
+  "plugin_type": "agent_action",
+  "capabilities": [],
+  "permissions": ["read_memory"],
+  "trusted": false,
+  "signature": null,
+  "security_level": 3,
+  "agent_actions": ["try_write", "ping"],
+  "memory_limit_mb": 128,
+  "cpu_limit_percent": 10.0,
+  "tags": ["harness", "verified"]
+}

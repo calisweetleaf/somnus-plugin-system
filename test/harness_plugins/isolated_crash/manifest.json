@@ -1,0 +1,16 @@
+{
+  "name": "isolated_crash",
+  "version": "1.0.0",
+  "description": "Isolated-domain harness plugin that crashes without taking the host.",
+  "author": "Somnus MAIL-Room",
+  "plugin_type": "agent_action",
+  "capabilities": [],
+  "permissions": ["read_memory"],
+  "trusted": false,
+  "signature": null,
+  "security_level": 4,
+  "agent_actions": ["crash"],
+  "memory_limit_mb": 128,
+  "cpu_limit_percent": 10.0,
+  "tags": ["harness", "isolated"]
+}

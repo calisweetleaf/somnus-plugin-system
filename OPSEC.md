@@ -36,10 +36,11 @@ lowers exposure. It does not make a checksum into a signature.
 | Manifest schema validation | `plugin_base.py:79` pydantic | **Real, but unreachable** until dependencies are installed. |
 | Regex blocklist scan | `plugin_manager.py:334` `PluginSecurityManager` | **Real but shallow** — substring/regex matching on `__import__`, `eval`, `exec`, `open`, `subprocess.`, `os.system`, `os.popen`. Trivially evaded by string construction. Superseded lineage. |
 
-**Current state (2026-09-18):** `security.py` imports. `PluginManager.load_plugin` calls
-`SecurityManager.validate_plugin` on the production path. Sandbox construction still does
-not wrap module import — that is PACKET-005. Marketplace extract-then-validate remains
-SEC-05. Permissions remain descriptive until the capability façade lands.
+**Current state (2026-09-18, PACKET-005):** `PluginManager.load_plugin` calls
+`SecurityManager.validate_plugin`, then assembles `HostCapabilityFacade`. Isolated
+plugins are staged through `create_sandbox` and imported only in
+`plugin_worker.worker_entry`. Marketplace extract-then-validate remains SEC-05.
+Permissions are object-capability policy.
 
 ---
 
@@ -51,7 +52,9 @@ SEC-05. Permissions remain descriptive until the capability façade lands.
 loader calls `SecurityManager.validate_plugin`. Historical claim that the symbol was
 missing is stale; do not revive it.
 
-*Residual:* analysis is static. Runtime isolation is PACKET-005.
+*Residual:* analysis is static for HOST_INTEGRATED / VERIFIED. ISOLATED plugins
+that fail the host-integrated safety bar still load in a worker; CRITICAL
+issues are the remaining refusal class for that domain.
 
 ### SEC-02 — Signature verification is a checksum — **HIGH**
 
@@ -150,15 +153,16 @@ when a signature is present and security level is HIGH.
 - **Never enable the marketplace network path** until SEC-02 through SEC-08 are resolved.
   `install_from_archive` with a locally verified archive is the only defensible install route
   today, and only after SEC-05 is fixed.
-- **Never treat `trusted: true` in a manifest as meaningful.** It is a self-assertion by the
-  plugin author with no verification behind it.
+- **Never treat `trusted: true` in a manifest as a verified trust root.** It is a
+  self-assertion. It now selects `HOST_INTEGRATED` domain. That is policy input,
+  not proof of origin.
 - **Never log credentials, tokens, or keys.** Per global operator doctrine.
 - **Never commit a real private key or a real trust root to this repository.** The placeholder
   at `marketplace.py:839-842` must be replaced by host-supplied configuration, not by a
   committed key.
-- **Assume plugin code is hostile.** Static analysis now runs on load. Runtime isolation
-  and object-capability permissions land in PACKET-005. Do not treat a passing scan as a
-  sandbox.
+- **Assume plugin code is hostile.** Static analysis runs on load. Untrusted
+  `security_level >= 4` plugins import in a worker. Do not treat a passing scan
+  as a sandbox for host-integrated plugins.
 
 ---
 

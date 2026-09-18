@@ -60,4 +60,6 @@ py-modules = [
   "hot_reload",
   "marketplace",
   "host_protocols",
+  "host_capabilities",
+  "plugin_worker",
 ]

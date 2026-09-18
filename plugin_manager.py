@@ -2,28 +2,28 @@
 
 Modified: 2026-09-18
 Modified by: Stilgar (Cursor Grok 4.6, Daeron operator)
-Justification: PACKET-002 remainder. This module no longer defines a rival
-    PluginManifest, PluginBase, PluginDiscovery, PluginFileWatcher, PluginStatus,
-    PluginPermission, PluginType, or PluginSecurityManager. It is the loader:
-    it discovers through discovery.PluginDiscovery, validates through
-    security.SecurityManager, and instantiates plugin_base.PluginBase.
-Provenance: SPEC.md section 7, packets/PACKET-002-lineage-convergence.md
-Files: plugin_manager.py
+Justification: PACKET-005. The loader assembles a HostCapabilityFacade for
+    every plugin. Isolated plugins import inside a worker; the host never
+    exec_modules their plugin.py. SecurityEnforcer is bound through the façade.
+Provenance: SPEC.md section 7, packets/PACKET-005-execution-boundary.md
+Files: plugin_manager.py, host_capabilities.py, plugin_worker.py
 """
 from __future__ import annotations
 
 import asyncio
 import importlib.util
 import logging
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from discovery import PluginDiscovery, PluginFileWatcher
+from host_capabilities import ExecutionDomain, HostCapabilityFacade, select_execution_domain
 from host_protocols import MemoryManager, SecurityEnforcer
 from plugin_base import (
     PluginBase,
@@ -33,7 +33,10 @@ from plugin_base import (
     PluginType,
     plugin_identity,
 )
+from plugin_worker import IsolatedPluginHandle
 from security import SecurityLevel, SecurityManager
+
+PluginRuntime = Union[PluginBase, IsolatedPluginHandle]
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +101,11 @@ class PluginManager:
         self.security_enforcer = security_enforcer
         self.plugin_base_dir = Path(plugin_base_dir)
 
-        self.active_plugins: Dict[str, PluginBase] = {}
+        self.active_plugins: Dict[str, PluginRuntime] = {}
         self.loaded_modules: Dict[str, Any] = {}
         self.plugin_routers: Dict[str, APIRouter] = {}
+        self.plugin_sandboxes: Dict[str, Any] = {}
+        self.plugin_domains: Dict[str, ExecutionDomain] = {}
 
         self.security_manager = SecurityManager(security_level=security_level)
         self.discovery = PluginDiscovery(self.plugin_base_dir)
@@ -161,40 +166,112 @@ class PluginManager:
                 )
                 return False
 
-            is_valid, issues = await self.security_manager.validate_plugin(plugin_path, manifest)
-            if not is_valid:
+            report_safe, issues = await self.security_manager.validate_plugin(plugin_path, manifest)
+            domain = select_execution_domain(manifest)
+            if not report_safe and domain != ExecutionDomain.ISOLATED:
                 logger.error("Plugin %s failed security validation: %s", plugin_id, issues)
                 return False
+            if not report_safe and domain == ExecutionDomain.ISOLATED:
+                logger.warning(
+                    "Plugin %s failed the host-integrated safety bar and will load isolated: %s",
+                    plugin_id,
+                    issues,
+                )
 
-            plugin_module = await self._load_plugin_module(plugin_path, plugin_id)
-            if not plugin_module:
+            facade = HostCapabilityFacade(
+                self.memory_manager,
+                self.security_enforcer,
+                manifest,
+                plugin_id,
+            )
+            self.plugin_domains[plugin_id] = domain
+
+            if domain == ExecutionDomain.ISOLATED:
+                plugin_instance = await self._load_isolated_plugin(plugin_path, plugin_id, manifest, facade)
+            else:
+                plugin_instance = await self._load_in_process_plugin(plugin_path, plugin_id, manifest, facade)
+
+            if plugin_instance is None:
+                self.plugin_domains.pop(plugin_id, None)
                 return False
 
-            plugin_class = getattr(plugin_module, "Plugin", None)
-            if plugin_class is None or not issubclass(plugin_class, PluginBase):
-                logger.error("Plugin %s does not subclass plugin_base.PluginBase", plugin_id)
-                return False
-
-            plugin_instance = plugin_class(plugin_id, manifest, self.memory_manager)
             if not await plugin_instance.initialize():
                 logger.error("Plugin %s initialization failed", plugin_id)
+                await self._teardown_failed_load(plugin_id, plugin_instance)
                 return False
 
             self.active_plugins[plugin_id] = plugin_instance
-            self.loaded_modules[plugin_id] = plugin_module
-            await self._register_plugin_api(plugin_id, plugin_instance)
+            if domain != ExecutionDomain.ISOLATED:
+                await self._register_plugin_api(plugin_id, plugin_instance)
 
             if not await plugin_instance.activate():
                 logger.error("Plugin %s activation failed", plugin_id)
                 await self.unload_plugin(plugin_id)
                 return False
 
-            logger.info("Plugin %s loaded and activated", plugin_id)
+            logger.info("Plugin %s loaded and activated in domain %s", plugin_id, domain.value)
             return True
 
         except Exception as exc:
             logger.error("Failed to load plugin %s: %s", plugin_id, exc)
             return False
+
+    async def _load_in_process_plugin(
+        self,
+        plugin_path: Path,
+        plugin_id: str,
+        manifest: PluginManifest,
+        facade: HostCapabilityFacade,
+    ) -> Optional[PluginBase]:
+        plugin_module = await self._load_plugin_module(plugin_path, plugin_id)
+        if not plugin_module:
+            return None
+        plugin_class = getattr(plugin_module, "Plugin", None)
+        if plugin_class is None or not issubclass(plugin_class, PluginBase):
+            logger.error("Plugin %s does not subclass plugin_base.PluginBase", plugin_id)
+            return None
+        instance = plugin_class(plugin_id, manifest, facade)
+        instance.execution_domain = facade.domain.value
+        self.loaded_modules[plugin_id] = plugin_module
+        return instance
+
+    async def _load_isolated_plugin(
+        self,
+        plugin_path: Path,
+        plugin_id: str,
+        manifest: PluginManifest,
+        facade: HostCapabilityFacade,
+    ) -> Optional[IsolatedPluginHandle]:
+        sandbox = await self.security_manager.create_sandbox(plugin_id)
+        staged = sandbox.temp_dir / "plugin"
+        self._stage_plugin_tree(plugin_path, staged)
+        self.plugin_sandboxes[plugin_id] = sandbox
+        handle = IsolatedPluginHandle(staged, plugin_id, manifest, facade)
+        self.loaded_modules[plugin_id] = {"isolated": True, "pid": handle.pid, "staged": str(staged)}
+        return handle
+
+    def _stage_plugin_tree(self, source: Path, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
+        for item in source.iterdir():
+            if item.name.startswith(".") or item.name == "__pycache__":
+                continue
+            target = dest / item.name
+            if item.is_file():
+                shutil.copy2(item, target)
+            elif item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+
+    async def _teardown_failed_load(self, plugin_id: str, instance: PluginRuntime) -> None:
+        try:
+            await instance.cleanup()
+        except Exception:
+            if hasattr(instance, "terminate_worker"):
+                instance.terminate_worker()
+        sandbox = self.plugin_sandboxes.pop(plugin_id, None)
+        if sandbox is not None:
+            await self.security_manager.cleanup_sandbox(sandbox)
+        self.loaded_modules.pop(plugin_id, None)
+        self.plugin_domains.pop(plugin_id, None)
 
     async def _load_plugin_module(self, plugin_path: Path, plugin_id: str) -> Optional[Any]:
         plugin_file = plugin_path / "plugin.py"
@@ -294,6 +371,10 @@ class PluginManager:
             sys.modules.pop(module_name, None)
             sys.modules.pop(f"{module_name}_api", None)
             self.loaded_modules.pop(plugin_id, None)
+            self.plugin_domains.pop(plugin_id, None)
+            sandbox = self.plugin_sandboxes.pop(plugin_id, None)
+            if sandbox is not None:
+                await self.security_manager.cleanup_sandbox(sandbox)
 
             logger.info("Plugin %s unloaded", plugin_id)
             return True
@@ -327,12 +408,15 @@ class PluginManager:
     def list_plugins(self) -> List[Dict[str, Any]]:
         return [plugin.get_info() for plugin in self.active_plugins.values()]
 
-    def get_plugins_by_type(self, plugin_type: PluginType) -> List[PluginBase]:
+    def get_plugins_by_type(self, plugin_type: PluginType) -> List[PluginRuntime]:
         return [
             plugin
             for plugin in self.active_plugins.values()
             if plugin.manifest.plugin_type == plugin_type
         ]
+
+    def get_execution_domain(self, plugin_id: str) -> Optional[ExecutionDomain]:
+        return self.plugin_domains.get(plugin_id)
 
 
 def create_plugin_api_routes(plugin_manager: PluginManager) -> APIRouter:

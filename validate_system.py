@@ -95,9 +95,19 @@ def check_import_plugin_base() -> CheckResult:
 
 @timed_check("import_all_modules")
 def check_import_all_modules() -> CheckResult:
-    """Verify all 7 root modules plus host_protocols import."""
-    modules = ["host_protocols", "plugin_base", "plugin_manager", "security",
-               "discovery", "orchestration", "hot_reload", "marketplace"]
+    """Verify root modules plus host seam and execution-boundary modules import."""
+    modules = [
+        "host_protocols",
+        "host_capabilities",
+        "plugin_worker",
+        "plugin_base",
+        "plugin_manager",
+        "security",
+        "discovery",
+        "orchestration",
+        "hot_reload",
+        "marketplace",
+    ]
     results = {}
     for mod_name in modules:
         try:
@@ -692,6 +702,13 @@ def check_production_load_path() -> CheckResult:
         plugin = manager.active_plugins[plugin_id]
         if not isinstance(plugin, PluginBase):
             return {"ok": False, "detail": "loaded instance is not plugin_base.PluginBase"}
+        from host_capabilities import ExecutionDomain, HostCapabilityFacade
+        if not isinstance(plugin.memory_manager, HostCapabilityFacade):
+            return {"ok": False, "detail": "plugin received a raw MemoryManager instead of a façade"}
+        if plugin.get_exported_action("ping") is None:
+            return {"ok": False, "detail": "ping is not an exported action"}
+        if manager.get_execution_domain(plugin_id) != ExecutionDomain.HOST_INTEGRATED:
+            return {"ok": False, "detail": f"unexpected domain {manager.get_execution_domain(plugin_id)}"}
         pinged = await plugin.ping(note="production-path")
         first = await plugin.checkpoint_state()
         second = await plugin.checkpoint_state()
@@ -728,6 +745,219 @@ def check_production_load_path() -> CheckResult:
             f"production path: discover→security→load {outcome['plugin_id']} "
             f"as {outcome['class']}, ping={outcome['ping']['pings']}, "
             f"checkpoint {outcome['checkpoint_id']}, restore, unload"
+        ),
+        extra=outcome,
+    )
+
+
+def _materialize_harness_plugin(name: str, root: Path) -> Path:
+    src = PROJECT_ROOT / "test" / "harness_plugins" / name
+    dest = root / "installed" / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+    return dest
+
+
+@timed_check("capability_denial")
+def check_capability_denial() -> CheckResult:
+    """Verified domain: missing WRITE_MEMORY is absence of the store object."""
+    import tempfile
+    from fastapi import FastAPI
+    from host_capabilities import CapabilityDenied, ExecutionDomain
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("verified_probe", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _materialize_harness_plugin("verified_probe", root)
+            manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            await manager.discover_and_load_plugins()
+            plugin = manager.active_plugins.get(plugin_id)
+            if plugin is None:
+                return {"ok": False, "detail": f"not loaded: {list(manager.active_plugins)}"}
+            domain = manager.get_execution_domain(plugin_id)
+            if domain != ExecutionDomain.VERIFIED:
+                return {"ok": False, "detail": f"domain {domain}"}
+            denied = False
+            error = ""
+            try:
+                await plugin.try_write()
+            except CapabilityDenied as exc:
+                denied = True
+                error = str(exc)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+            await manager.unload_plugin(plugin_id)
+            return {
+                "ok": denied,
+                "denied": denied,
+                "error": error,
+                "domain": domain.value,
+                "network": plugin.memory_manager.network,
+                "filesystem": plugin.memory_manager.filesystem,
+            }
+
+    outcome = asyncio.run(run())
+    if not outcome.get("denied"):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=f"verified domain denied WRITE_MEMORY: {outcome['error']}",
+        extra=outcome,
+    )
+
+
+@timed_check("exported_action_deny")
+def check_exported_action_deny() -> CheckResult:
+    """initialize / _plugin_* must not be dispatchable through the orchestrator."""
+    from fastapi import FastAPI
+    from orchestration import ExecutionRequest, PluginExecutor
+    from plugin_base import ActionNotExported, plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("example_plugin", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        manager = PluginManager(
+            FastAPI(),
+            HarnessMemoryManager(),
+            HarnessSecurityEnforcer(),
+            PROJECT_ROOT,
+        )
+        await manager.discover_and_load_plugins()
+        plugin = manager.active_plugins[plugin_id]
+        executor = PluginExecutor(max_workers=2)
+        denied = await executor.execute_plugin_method(
+            plugin,
+            ExecutionRequest(
+                request_id="deny-initialize",
+                plugin_id=plugin_id,
+                method_name="initialize",
+            ),
+        )
+        pinged = await executor.execute_plugin_method(
+            plugin,
+            ExecutionRequest(
+                request_id="allow-ping",
+                plugin_id=plugin_id,
+                method_name="ping",
+                kwargs={"note": "exported"},
+            ),
+        )
+        executor.shutdown()
+        await manager.unload_plugin(plugin_id)
+        return {
+            "denied_success": denied.success,
+            "denied_error": type(denied.error).__name__ if denied.error else None,
+            "ping_success": pinged.success,
+            "ping": pinged.result,
+        }
+
+    outcome = asyncio.run(run())
+    if outcome["denied_success"] or outcome["denied_error"] != "ActionNotExported":
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    if not outcome["ping_success"]:
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail="orchestrator denied initialize and dispatched ping with kwargs",
+        extra=outcome,
+    )
+
+
+@timed_check("isolated_timeout_kills")
+def check_isolated_timeout_kills() -> CheckResult:
+    """ISOLATED hang must terminate the worker PID; crash must not take the host."""
+    import tempfile
+    from fastapi import FastAPI
+    from host_capabilities import ExecutionDomain
+    from orchestration import ExecutionRequest, PluginExecutor
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+    from plugin_worker import IsolatedPluginHandle
+
+    hang_id = plugin_identity("isolated_probe", "1.0.0")
+    crash_id = plugin_identity("isolated_crash", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _materialize_harness_plugin("isolated_probe", root)
+            _materialize_harness_plugin("isolated_crash", root)
+            manager = PluginManager(
+                FastAPI(),
+                HarnessMemoryManager(),
+                HarnessSecurityEnforcer(),
+                root,
+            )
+            await manager.discover_and_load_plugins()
+            hang = manager.active_plugins.get(hang_id)
+            crash = manager.active_plugins.get(crash_id)
+            if hang is None or crash is None:
+                return {"ok": False, "detail": f"missing plugins {list(manager.active_plugins)}"}
+            if not isinstance(hang, IsolatedPluginHandle) or not isinstance(crash, IsolatedPluginHandle):
+                return {"ok": False, "detail": "isolated plugins were imported in-process"}
+            if manager.get_execution_domain(hang_id) != ExecutionDomain.ISOLATED:
+                return {"ok": False, "detail": "hang plugin not isolated"}
+            pid_before = hang.pid
+            alive_before = hang.is_alive()
+            executor = PluginExecutor(max_workers=2)
+            hung = await executor.execute_plugin_method(
+                hang,
+                ExecutionRequest(
+                    request_id="hang",
+                    plugin_id=hang_id,
+                    method_name="hang",
+                    timeout=0.6,
+                ),
+            )
+            alive_after = hang.is_alive()
+            crashed = await executor.execute_plugin_method(
+                crash,
+                ExecutionRequest(
+                    request_id="crash",
+                    plugin_id=crash_id,
+                    method_name="crash",
+                    timeout=2.0,
+                ),
+            )
+            host_survived = True
+            executor.shutdown()
+            await manager.unload_plugin(hang_id)
+            await manager.unload_plugin(crash_id)
+            return {
+                "ok": (
+                    hung.termination == "worker_terminated"
+                    and not hung.success
+                    and alive_before
+                    and not alive_after
+                    and not crashed.success
+                    and host_survived
+                ),
+                "pid_before": pid_before,
+                "alive_before": alive_before,
+                "alive_after": alive_after,
+                "termination": hung.termination,
+                "hang_error": str(hung.error),
+                "crash_error": str(crashed.error),
+                "host_survived": host_survived,
+            }
+
+    outcome = asyncio.run(run())
+    if not outcome.get("ok"):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=(
+            f"isolated hang killed pid {outcome['pid_before']}; "
+            f"crash stayed in worker ({outcome['crash_error']})"
         ),
         extra=outcome,
     )
@@ -770,6 +1000,9 @@ def main() -> int:
         check_circuit_breaker,
         check_protocol_conformance,
         check_production_load_path,
+        check_capability_denial,
+        check_exported_action_deny,
+        check_isolated_timeout_kills,
     ]
 
     results: List[CheckResult] = []
