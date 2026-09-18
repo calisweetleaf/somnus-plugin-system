@@ -370,3 +370,14 @@ Additional corrections from review, not from the cold agent:
   (component 18/18, e2e 12/12). `bash gate.sh` PASS on runnable checks.
 - Next agent: Embed this runtime in a host. Do not add more mechanisms.
 - Hazards: marketplace network path remains disabled.
+
+### 2026-09-18 23:30 UTC — Stilgar (Cursor Grok 4.6) — Truth Harness revalidation
+
+- Base: `34dfeca`
+- Did: Re-ran the labeled harness and gate after the PACKET-007 commit.
+  Mechanical probe now cites HEAD `34dfeca` and run `20260918T232952Z`.
+- Validation: `validate_system.py` 30/30 PASS (18 component / 12 e2e).
+  `bash gate.sh` PASS 23 / PENDING 0 / NOT RUN 2 (packet validator missing;
+  no pytest suite by design).
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.

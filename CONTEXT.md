@@ -246,8 +246,9 @@ Recommended lookup order:
 
 **Keys:** `PACKET-007` · `tools/state_probe.py` · `component` · `e2e` · `STATE_PROBE`
 
-- **State:** 30/30 harness PASS is 18 component + 12 E2E. STATE.md includes a
-  generated probe block. Packets 001–007 are landed.
+- **State:** 30/30 harness PASS is 18 component + 12 E2E at
+  `test/system/runs/20260918T232952Z`. STATE.md includes a generated probe
+  block citing HEAD `34dfeca`. Packets 001–007 are landed.
 - **Next read:** `STATE.md`
 - **Open:** host embedding.
 
