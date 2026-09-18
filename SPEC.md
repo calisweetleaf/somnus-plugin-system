@@ -14,7 +14,7 @@
 This specification describes the **live** contract after PACKET-005.
 
 - **LIVE** — implemented in source now, at the cited surface.
-- **PENDING-007** — adversarial truth harness.
+The contract is live through PACKET-007. Host embedding is the remaining work.
 
 An agent authoring a plugin **today** subclasses `plugin_base.PluginBase`, implements the
 four `_plugin_*` hooks, declares `agent_actions`, and loads through

@@ -242,6 +242,17 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — TRUTH HARNESS LANDED
+
+**Keys:** `PACKET-007` · `tools/state_probe.py` · `component` · `e2e` · `STATE_PROBE`
+
+- **State:** 30/30 harness PASS is 18 component + 12 E2E. STATE.md includes a
+  generated probe block. Packets 001–007 are landed.
+- **Next read:** `STATE.md`
+- **Open:** host embedding.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

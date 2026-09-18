@@ -9,17 +9,13 @@
 
 ## Active
 
-### `PACKET-007` — Truth Harness · READY · blocked on nothing
-
-Adversarial E2E harness plus mechanically generated STATE probes.
-
-→ `packets/PACKET-007-truth-harness.md`
+None. The substrate is a plugin runtime. Next work is host embedding.
 
 ---
 
 ## Queued
 
-None. Host embedding is the work after PACKET-007.
+None.
 
 ---
 
@@ -33,6 +29,7 @@ None. Host embedding is the work after PACKET-007.
 | PACKET-004 reference plugin | LANDED 2026-09-18 |
 | PACKET-005 execution boundary | LANDED 2026-09-18 |
 | PACKET-006 transactional lifecycle | LANDED 2026-09-18 |
+| PACKET-007 truth harness | LANDED 2026-09-18 |
 
 ---
 

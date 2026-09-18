@@ -37,9 +37,10 @@ class CheckResult:
     duration_ms: float = 0.0
     detail: str = ""
     extra: Dict[str, Any] = field(default_factory=dict)
+    kind: str = "component"  # component | e2e
 
 
-def timed_check(name: str):
+def timed_check(name: str, kind: str = "component"):
     """Decorator to time a check function and capture its result."""
     def decorator(fn: Callable[[], CheckResult]) -> Callable[[], CheckResult]:
         def wrapper() -> CheckResult:
@@ -48,6 +49,7 @@ def timed_check(name: str):
                 result = fn()
                 result.duration_ms = (time.monotonic() - start) * 1000.0
                 result.name = name
+                result.kind = kind
                 return result
             except Exception as exc:
                 return CheckResult(
@@ -56,6 +58,7 @@ def timed_check(name: str):
                     duration_ms=(time.monotonic() - start) * 1000.0,
                     detail=f"exception: {exc}",
                     extra={"traceback": traceback.format_exc()},
+                    kind=kind,
                 )
         return wrapper
     return decorator
@@ -671,7 +674,7 @@ class HarnessSecurityEnforcer:
         return True
 
 
-@timed_check("production_load_path")
+@timed_check("production_load_path", kind="e2e")
 def check_production_load_path() -> CheckResult:
     """Drive a canonical plugin through PluginManager.load_plugin().
 
@@ -760,7 +763,7 @@ def _materialize_harness_plugin(name: str, root: Path) -> Path:
     return dest
 
 
-@timed_check("capability_denial")
+@timed_check("capability_denial", kind="e2e")
 def check_capability_denial() -> CheckResult:
     """Verified domain: missing WRITE_MEMORY is absence of the store object."""
     import tempfile
@@ -813,7 +816,7 @@ def check_capability_denial() -> CheckResult:
     )
 
 
-@timed_check("exported_action_deny")
+@timed_check("exported_action_deny", kind="e2e")
 def check_exported_action_deny() -> CheckResult:
     """initialize / _plugin_* must not be dispatchable through the orchestrator."""
     from fastapi import FastAPI
@@ -872,7 +875,7 @@ def check_exported_action_deny() -> CheckResult:
     )
 
 
-@timed_check("isolated_timeout_kills")
+@timed_check("isolated_timeout_kills", kind="e2e")
 def check_isolated_timeout_kills() -> CheckResult:
     """ISOLATED hang must terminate the worker PID; crash must not take the host."""
     import tempfile
@@ -973,7 +976,7 @@ def _zip_plugin_tree(source: Path, archive: Path) -> None:
                 handle.write(path, path.relative_to(source))
 
 
-@timed_check("zip_slip_rejected")
+@timed_check("zip_slip_rejected", kind="e2e")
 def check_zip_slip_rejected() -> CheckResult:
     """Zip members with .. or absolute paths are rejected before extract."""
     import tempfile
@@ -1013,7 +1016,7 @@ def check_zip_slip_rejected() -> CheckResult:
         )
 
 
-@timed_check("staged_install_and_failed_n1")
+@timed_check("staged_install_and_failed_n1", kind="e2e")
 def check_staged_install_and_failed_n1() -> CheckResult:
     """Local archive install boot-probes; failed N+1 leaves generation N serving."""
     import tempfile
@@ -1079,7 +1082,7 @@ def check_staged_install_and_failed_n1() -> CheckResult:
     )
 
 
-@timed_check("stable_host_route")
+@timed_check("stable_host_route", kind="e2e")
 def check_stable_host_route() -> CheckResult:
     """Host owns /api/plugins/{id}/{path}; generation swing does not include_router."""
     from fastapi import FastAPI
@@ -1147,6 +1150,182 @@ def check_stable_host_route() -> CheckResult:
     )
 
 
+@timed_check("malformed_signature", kind="e2e")
+def check_malformed_signature() -> CheckResult:
+    """Signed archive without a matching host key is refused."""
+    import tempfile
+    from fastapi import FastAPI
+    from marketplace import MarketplaceConfig, PluginInstaller, TrustSystem
+    from plugin_manager import PluginManager
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "signed"
+            import shutil
+            shutil.copytree(PROJECT_ROOT / "test" / "harness_plugins" / "verified_probe", src)
+            manifest = json.loads((src / "manifest.json").read_text())
+            manifest["signature"] = "deadbeef"
+            (src / "manifest.json").write_text(json.dumps(manifest))
+            archive = root / "signed.zip"
+            _zip_plugin_tree(src, archive)
+            manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            installer = PluginInstaller(manager, manager.security_manager, MarketplaceConfig(), TrustSystem())
+            no_key = await installer.install_from_archive(archive)
+            bogus = await installer.install_from_archive(
+                archive,
+                developer_id="nobody",
+                developer_public_key=b"-----BEGIN PUBLIC KEY-----\nnot-a-key\n-----END PUBLIC KEY-----",
+            )
+            return {"no_key": no_key, "bogus_key": bogus}
+
+    outcome = asyncio.run(run())
+    if outcome["no_key"][0] or outcome["bogus_key"][0]:
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=f"malformed signature refused: {outcome['no_key'][1]} / {outcome['bogus_key'][1]}",
+        extra=outcome,
+    )
+
+
+@timed_check("load_time_exception", kind="e2e")
+def check_load_time_exception() -> CheckResult:
+    """Import-time exception in plugin.py fails the generation and leaves the host up."""
+    import tempfile
+    from fastapi import FastAPI
+    from plugin_manager import PluginManager
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = root / "installed" / "boom"
+            plugin.mkdir(parents=True)
+            (plugin / "manifest.json").write_text(json.dumps({
+                "name": "boom",
+                "version": "1.0.0",
+                "description": "Import-time explosion used as an adversarial load probe.",
+                "author": "Somnus MAIL-Room",
+                "plugin_type": "agent_action",
+                "permissions": ["read_memory"],
+                "trusted": True,
+                "security_level": 1,
+                "agent_actions": [],
+            }))
+            (plugin / "plugin.py").write_text("raise RuntimeError('boom at import')\n")
+            manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            await manager.discover_and_load_plugins()
+            return {
+                "loaded": list(manager.active_plugins),
+                "host_alive": True,
+            }
+
+    outcome = asyncio.run(run())
+    if outcome["loaded"]:
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail="import-time exception stayed out of the host; nothing loaded",
+        extra=outcome,
+    )
+
+
+@timed_check("dependency_cycle", kind="e2e")
+def check_dependency_cycle() -> CheckResult:
+    """DependencyResolver returns an order even when a cycle is declared."""
+    from discovery import DependencyResolver
+
+    resolver = DependencyResolver()
+    resolver.add_plugin("alpha_1.0.0", {"beta_1.0.0"})
+    resolver.add_plugin("beta_1.0.0", {"alpha_1.0.0"})
+    order = resolver.get_load_order({"alpha_1.0.0", "beta_1.0.0"})
+    if not order or set(order) != {"alpha_1.0.0", "beta_1.0.0"}:
+        return CheckResult(name="", status="fail", detail=f"order={order}")
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=f"cycle broken into load order {order}",
+        extra={"order": order},
+    )
+
+
+@timed_check("state_migration", kind="e2e")
+def check_state_migration() -> CheckResult:
+    """Canonical state survives a generation swing."""
+    from fastapi import FastAPI
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("example_plugin", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), PROJECT_ROOT)
+        await manager.discover_and_load_plugins()
+        plugin = manager.active_plugins[plugin_id]
+        await plugin.ping(note="before-swing")
+        first = manager.generations.current[plugin_id].generation
+        await manager.reload_plugin(plugin_id)
+        after = manager.active_plugins[plugin_id]
+        pings = after._internal_state.get("pings")
+        second = manager.generations.current[plugin_id].generation
+        await manager.unload_plugin(plugin_id)
+        return {
+            "first": first,
+            "second": second,
+            "pings": pings,
+            "swung": second != first,
+        }
+
+    outcome = asyncio.run(run())
+    if not outcome["swung"] or outcome["pings"] != 1:
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=f"state migrated across g{outcome['first']}→g{outcome['second']} pings={outcome['pings']}",
+        extra=outcome,
+    )
+
+
+@timed_check("restart_recovery", kind="e2e")
+def check_restart_recovery() -> CheckResult:
+    """A new manager against the same install root rediscovers and loads the plugin."""
+    import tempfile
+    from fastapi import FastAPI
+    from marketplace import MarketplaceConfig, PluginInstaller
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("verified_probe", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "verified.zip"
+            _zip_plugin_tree(PROJECT_ROOT / "test" / "harness_plugins" / "verified_probe", archive)
+            first = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            installer = PluginInstaller(first, first.security_manager, MarketplaceConfig())
+            ok, _ = await installer.install_from_archive(archive)
+            await first.stop()
+            second = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            await second.discover_and_load_plugins()
+            recovered = plugin_id in second.active_plugins
+            await second.unload_plugin(plugin_id)
+            return {"installed": ok, "recovered": recovered, "live": (root / "installed" / "verified_probe").exists()}
+
+    outcome = asyncio.run(run())
+    if not (outcome["installed"] and outcome["recovered"] and outcome["live"]):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail="restart against the same install root reloaded verified_probe_1.0.0",
+        extra=outcome,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -1190,6 +1369,11 @@ def main() -> int:
         check_zip_slip_rejected,
         check_staged_install_and_failed_n1,
         check_stable_host_route,
+        check_malformed_signature,
+        check_load_time_exception,
+        check_dependency_cycle,
+        check_state_migration,
+        check_restart_recovery,
     ]
 
     results: List[CheckResult] = []
@@ -1200,7 +1384,8 @@ def main() -> int:
 
         marker = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
         duration = f"{result.duration_ms:.1f}ms"
-        print(f"  [{marker}]  {result.name:<40s} {duration:>10s}")
+        kind = result.kind.upper()
+        print(f"  [{marker}]  [{kind:<9s}] {result.name:<40s} {duration:>10s}")
         if result.detail:
             for line in result.detail.split("\n"):
                 print(f"           {line}")
@@ -1212,11 +1397,17 @@ def main() -> int:
     pass_count = sum(1 for r in results if r.status == "pass")
     fail_count = sum(1 for r in results if r.status == "fail")
     skip_count = sum(1 for r in results if r.status == "skip")
+    component_pass = sum(1 for r in results if r.status == "pass" and r.kind == "component")
+    e2e_pass = sum(1 for r in results if r.status == "pass" and r.kind == "e2e")
+    component_total = sum(1 for r in results if r.kind == "component")
+    e2e_total = sum(1 for r in results if r.kind == "e2e")
     total_ms = sum(r.duration_ms for r in results)
 
     print("=" * 70)
     print(f"  PASS {pass_count}   FAIL {fail_count}   SKIP {skip_count}   "
           f"total {total_ms:.1f}ms")
+    print(f"  COMPONENT {component_pass}/{component_total}   E2E {e2e_pass}/{e2e_total}")
+    print("  E2E counts are system proofs. Do not read component PASS as runtime validation.")
     if fail_count > 0:
         print("  RESULT: FAIL")
     else:
@@ -1233,6 +1424,7 @@ def main() -> int:
                 "status": r.status,
                 "duration_ms": round(r.duration_ms, 2),
                 "detail": r.detail,
+                "kind": r.kind,
                 "extra": {k: v for k, v in r.extra.items() if k != "traceback"},
             }
             for r in results
@@ -1243,6 +1435,10 @@ def main() -> int:
             "skip_count": skip_count,
             "total_duration_ms": round(total_ms, 2),
             "result": "PASS" if fail_count == 0 else "FAIL",
+            "component_pass": component_pass,
+            "component_total": component_total,
+            "e2e_pass": e2e_pass,
+            "e2e_total": e2e_total,
         },
     }
 

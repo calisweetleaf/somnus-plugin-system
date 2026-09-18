@@ -357,3 +357,16 @@ Additional corrections from review, not from the cold agent:
   serving; host route reload swung g1→g2 without include_router
 - Next agent: Execute PACKET-007 truth harness.
 - Hazards: none remaining on the local install path.
+
+### 2026-09-18 23:28 UTC — Stilgar (Cursor Grok 4.6) — Truth Harness
+
+- Base: `0007476`
+- Did: Landed PACKET-007. Harness checks are labeled component vs E2E.
+  Added malformed signature, import-time exception, dependency cycle,
+  generation state migration, and restart recovery. `tools/state_probe.py`
+  writes mechanical facts into STATE.md. Restore across generations now
+  searches by checkpoint id.
+- Validation: `.venv/bin/python validate_system.py` — 30/30 PASS
+  (component 18/18, e2e 12/12). `bash gate.sh` PASS on runnable checks.
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.

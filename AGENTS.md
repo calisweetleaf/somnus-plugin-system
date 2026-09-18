@@ -37,12 +37,12 @@ trajectory is deliberate over-engineering: strict deep integration, no thin adap
 | Does it run? | **Yes.** The production loader loads `example_plugin_1.0.0` through a capability façade. |
 | Host boundary | `host_protocols.py` Protocol seam. Zero donor `core`/`schemas` imports. |
 | Lineage | `plugin_base.py` is canonical **in source**. Duplicate manager types deleted. |
-| Active packet | `PACKET-007` — truth harness. |
-| Validation | `validate_system.py` — 25 checks (component + production + domain + lifecycle). Not yet labeled adversarial. |
+| Active packet | None. Host embedding is next. |
+| Validation | `validate_system.py` — 30 checks labeled component vs E2E. Mechanical STATE probe is in `gate.sh`. |
 | Gate | `bash gate.sh` — PASS on runnable checks; packet validator NOT RUN. |
 
-**Landed:** PACKET-001 through PACKET-006. **Not landed:** adversarial labeled harness
-and mechanical STATE.
+**Landed:** PACKET-001 through PACKET-007. The control plane and runtime now
+share one heartbeat.
 
 ---
 

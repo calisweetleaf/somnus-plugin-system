@@ -1045,13 +1045,15 @@ class PluginBase(ABC):
         search = getattr(self.memory_manager, "framework_search_memories", None) or self.memory_manager.search_memories
         memories = await search(
             user_id=f"plugin_{self.plugin_id}",
-            query=f"checkpoint {checkpoint_id}",
+            query=checkpoint_id,
             memory_type=MemoryType.USER,
             limit=1,
         )
 
         if memories:
-            state_data = memories[0].metadata.get("state_data")
+            first = memories[0]
+            metadata = first.metadata if hasattr(first, "metadata") else first.get("metadata", {})
+            state_data = metadata.get("state_data") if metadata else None
             if state_data:
                 success = await self.set_state(state_data)
                 if success:

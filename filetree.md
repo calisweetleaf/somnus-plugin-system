@@ -31,7 +31,8 @@ somnus-plugin-system/
 │
 ├── pyproject.toml             Dependency contract (9 deps, no pins)
 ├── gate.sh                    Validation entrypoint — honest, reports NOT RUN
-├── validate_system.py         Production validation harness (component + production + domain)
+├── validate_system.py         Production validation harness (component vs E2E)
+├── tools/state_probe.py       Mechanical STATE facts for gate.sh / STATE.md
 ├── python_production_doctor.py  Somnus diagnostic toolkit
 │
 ├── host_protocols.py          HOST BOUNDARY — Protocol contracts for embedding system
@@ -58,7 +59,7 @@ somnus-plugin-system/
 │   ├── PACKET-004-reference-plugin.md               LANDED
 │   ├── PACKET-005-execution-boundary.md             LANDED
 │   ├── PACKET-006-transactional-lifecycle.md        LANDED
-│   └── PACKET-007-truth-harness.md                  ACTIVE
+│   └── PACKET-007-truth-harness.md                  LANDED
 │
 ├── .claude/
 │   ├── settings.json                        Permissions derived from THIS layout

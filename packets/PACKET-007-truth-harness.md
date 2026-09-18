@@ -1,7 +1,7 @@
 # PACKET-007 — Truth Harness
 
 **Owner:** next executing agent
-**Status:** QUEUED
+**Status:** LANDED
 **Depends on:** PACKET-006
 **Size:** one session
 **Priority:** high — the control plane must not have to remember itself

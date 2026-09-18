@@ -106,7 +106,7 @@ echo "[5b] Foreign artifact drift"
 KNOWN="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker plugin_lifecycle validate_system"
 STRAY=""
 for f in $(git ls-files --others --exclude-standard -- '*.py' 2>/dev/null); do
-  case "$f" in installed/*|test/harness_plugins/*|test/system/runs/*) continue ;; esac
+  case "$f" in installed/*|test/harness_plugins/*|test/system/runs/*|tools/*) continue ;; esac
   base=$(basename "$f" .py); hit=0
   for k in $KNOWN; do [ "$base" = "$k" ] && hit=1; done
   [ "$hit" -eq 0 ] && STRAY="$STRAY $f"
@@ -148,6 +148,23 @@ fi
 echo
 echo "[7] Test suite"
 skip "test suite" "none exists in this repository by design — validation here is experimentation (AGENTS.md section 7)"
+
+# ----------------------------------------------------- mechanical STATE
+echo
+echo "[8] Mechanical STATE probe"
+if [ ! -x .venv/bin/python ]; then
+  skip "state probe" "no .venv"
+elif [ ! -f tools/state_probe.py ]; then
+  skip "state probe" "tools/state_probe.py missing"
+else
+  if out=$(.venv/bin/python tools/state_probe.py 2>&1); then
+    ok "state probe wrote test/system/STATE_PROBE.json"
+    printf '%s\n' "$out" | sed 's/^/           /'
+  else
+    bad "state probe failed"
+    printf '%s\n' "$out" | sed 's/^/           /'
+  fi
+fi
 
 # ----------------------------------------------------------------- summary
 echo

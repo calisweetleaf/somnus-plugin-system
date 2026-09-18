@@ -496,6 +496,15 @@ A generated map, a summary, or the router never owns behavior it merely describe
 - Host FastAPI graph is permanent; swing changes the generation table.
 - Watchdog uses `loop.call_soon_threadsafe`. Placeholder official PEM is not registered.
 
+## 2026-09-18 — TRUTH HARNESS LANDED
+
+**Keys:** `PACKET-007` · `state_probe` · `component` vs `e2e`
+
+- Do not read component 18/18 as system validation.
+- Cross-generation restore looks up `checkpoint_id` in host memory, not the
+  in-process `_checkpoints` dict of generation N.
+- STATE.md mechanical block is generated. Humans write interpretation only.
+
 ---
 
 ## Memory Maintenance Notes

@@ -129,14 +129,13 @@ controlled or the defaults must be removed.
 TLS itself is configured correctly: `ssl.create_default_context(cafile=certifi.where())`
 (`:198`), `TCPConnector` (`:199`), 30s total / 10s connect timeouts (`:200`).
 
-### SEC-09 — Resource limits are declared and unenforceable — **MEDIUM**
+### SEC-09 — Resource limits are measured, not terminated — **MEDIUM, residual**
 
-`manifest.memory_limit_mb` and `manifest.cpu_limit_percent` (`plugin_base.py:114-115`) are
-validated on input and not enforced at runtime. `orchestration.py:635` hardcodes CPU usage to
-`0.0`, so `ResourceMonitor.check_resource_limits` (`:124`) can never trip its CPU branch
-(`:132`). `ExecutionResult.memory_used` (`:74`) is never assigned.
-
-A resource-exhaustion plugin is currently unconstrained by these fields.
+Orchestrator CPU is sampled over the request window (`process_time` / `monotonic`).
+`plugin_base.ResourceMonitor` reads real RSS. Isolated workers can be terminated.
+Host-integrated / verified timeouts cancel the await and record `NOT TERMINABLE`.
+`ExecutionResult.memory_used` is still unused. Declared `cpu_limit_percent` does
+not kill an in-process plugin.
 
 ### SEC-10 — Signature verification stub returns True — **RESOLVED by deletion**
 
