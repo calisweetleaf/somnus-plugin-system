@@ -39,8 +39,9 @@ lowers exposure. It does not make a checksum into a signature.
 **Current state (2026-09-18, PACKET-005):** `PluginManager.load_plugin` calls
 `SecurityManager.validate_plugin`, then assembles `HostCapabilityFacade`. Isolated
 plugins are staged through `create_sandbox` and imported only in
-`plugin_worker.worker_entry`. Marketplace extract-then-validate remains SEC-05.
-Permissions are object-capability policy.
+`plugin_worker.worker_entry`. Local `install_from_archive` inspects zip members before extract, boot-probes
+a staged generation, and promotes with a live-link swing. The marketplace
+network path stays disabled. Permissions are object-capability policy.
 
 ---
 
@@ -89,16 +90,13 @@ stores raw bytes **without parsing**, so the malformed key fails only inside
 
 **No real trust root is configured in this repository.**
 
-### SEC-05 — Zip-slip in archive extraction — **HIGH**
+### SEC-05 — Zip-slip in archive extraction — **RESOLVED on the local path**
 
-`marketplace.py:479` and `:538` call `zip_ref.extractall(extract_dir)` with **no member-path
-sanitization**. Archive entries containing `../` write outside the intended directory.
-
-Aggravating: the security scan runs **after** extraction (`:494`, `:553`). By the time analysis
-happens, traversal writes have already landed.
-
-`install_from_archive` (`:524`) is the only genuinely functional installation path in the
-module — and it is the one carrying this defect.
+`plugin_lifecycle.inspect_zip_members` rejects `..`, absolute paths, and links
+before any extract. `extract_zip_safe` never calls `ZipFile.extractall`.
+`install_from_archive` boot-probes the staged tree and only then promotes a
+live symlink. The network install path remains disabled and must not regain
+`extractall`.
 
 ### SEC-06 — Unbounded download despite a declared size cap — **MEDIUM**
 
@@ -152,14 +150,14 @@ when a signature is present and security level is HIGH.
 
 - **Never enable the marketplace network path** until SEC-02 through SEC-08 are resolved.
   `install_from_archive` with a locally verified archive is the only defensible install route
-  today, and only after SEC-05 is fixed.
+  today. Local `install_from_archive` is the proven path.
 - **Never treat `trusted: true` in a manifest as a verified trust root.** It is a
   self-assertion. It now selects `HOST_INTEGRATED` domain. That is policy input,
   not proof of origin.
 - **Never log credentials, tokens, or keys.** Per global operator doctrine.
 - **Never commit a real private key or a real trust root to this repository.** The placeholder
-  at `marketplace.py:839-842` must be replaced by host-supplied configuration, not by a
-  committed key.
+  The former placeholder official PEM is no longer registered. Host-supplied
+  keys are registered per signed local install.
 - **Assume plugin code is hostile.** Static analysis runs on load. Untrusted
   `security_level >= 4` plugins import in a worker. Do not treat a passing scan
   as a sandbox for host-integrated plugins.
@@ -171,6 +169,7 @@ when a signature is present and security level is HIGH.
 | Finding | Lands in |
 |---|---|
 | SEC-01 | `packets/PACKET-002-lineage-convergence.md` |
-| SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08 | Not yet packetized. A marketplace hardening packet must be written before any network path is enabled. |
+| SEC-05 | `packets/PACKET-006-transactional-lifecycle.md` (local archive) |
+| SEC-02, SEC-03, SEC-04, SEC-06, SEC-07, SEC-08 | Network path stays disabled until a later marketplace packet. |
 | SEC-09 | Not yet packetized. Depends on `orchestration.py` resource instrumentation. |
 | SEC-10 | `packets/PACKET-002-lineage-convergence.md` (deletion) |

@@ -62,4 +62,5 @@ py-modules = [
   "host_protocols",
   "host_capabilities",
   "plugin_worker",
+  "plugin_lifecycle",
 ]

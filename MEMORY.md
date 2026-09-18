@@ -487,6 +487,15 @@ A generated map, a summary, or the router never owns behavior it merely describe
 - In-process timeouts cannot kill a Python thread; they record `NOT TERMINABLE`.
 - Isolated timeouts terminate the worker.
 
+## 2026-09-18 — TRANSACTIONAL LIFECYCLE LANDED
+
+**Keys:** `PACKET-006` · `ZipSlipError` · `PluginGeneration`
+
+- Zip members are inspected before extract. `extractall` is gone from marketplace.
+- Live generation N is never deleted before N+1 boot-probes.
+- Host FastAPI graph is permanent; swing changes the generation table.
+- Watchdog uses `loop.call_soon_threadsafe`. Placeholder official PEM is not registered.
+
 ---
 
 ## Memory Maintenance Notes

@@ -9,19 +9,17 @@
 
 ## Active
 
-### `PACKET-006` — Transactional Lifecycle · READY · blocked on nothing
+### `PACKET-007` — Truth Harness · READY · blocked on nothing
 
-Staged zip-safe install, blue/green generations, stable host route.
+Adversarial E2E harness plus mechanically generated STATE probes.
 
-→ `packets/PACKET-006-transactional-lifecycle.md`
+→ `packets/PACKET-007-truth-harness.md`
 
 ---
 
 ## Queued
 
-| Packet | Mission | Status | Blocked on |
-|---|---|---|---|
-| `PACKET-007` | Truth harness — adversarial E2E + mechanical STATE | QUEUED | 006 |
+None. Host embedding is the work after PACKET-007.
 
 ---
 
@@ -34,6 +32,7 @@ Staged zip-safe install, blue/green generations, stable host route.
 | PACKET-003 host boundary realization | LANDED |
 | PACKET-004 reference plugin | LANDED 2026-09-18 |
 | PACKET-005 execution boundary | LANDED 2026-09-18 |
+| PACKET-006 transactional lifecycle | LANDED 2026-09-18 |
 
 ---
 

@@ -14,7 +14,6 @@
 This specification describes the **live** contract after PACKET-005.
 
 - **LIVE** — implemented in source now, at the cited surface.
-- **PENDING-006** — transactional lifecycle (staged install, generation reload, host route).
 - **PENDING-007** — adversarial truth harness.
 
 An agent authoring a plugin **today** subclasses `plugin_base.PluginBase`, implements the
@@ -41,7 +40,9 @@ object-capability policy.
 | Discovery | `discovery.PluginDiscovery` | LIVE |
 | Static security | `security.SecurityManager` | LIVE |
 | Loader | `plugin_manager.PluginManager.load_plugin` | LIVE |
-| API mounting | `plugin_manager.PluginManager._register_plugin_api` | LIVE |
+| API mounting | Host route `/api/plugins/{plugin_id}/{path:path}` | LIVE |
+| Install | `marketplace.PluginInstaller.install_from_archive` zip-safe + staged | LIVE |
+| Reload | Blue/green `PluginManager.reload_plugin` | LIVE |
 | Reference plugin | `installed/example_plugin/` | LIVE |
 | Capability façade | `host_capabilities.HostCapabilityFacade` | LIVE |
 | Execution domain | `host_capabilities.select_execution_domain` | LIVE |
@@ -127,8 +128,9 @@ receive a raw ambient `MemoryManager`.
 `agent_actions` is the invocation allow-list. `PluginBase` binds declared names
 to handlers at construction. `orchestration.PluginExecutor.execute_plugin_method`
 dispatches only registered actions — `initialize`, `_plugin_*`, and other
-lifecycle methods are refused. API endpoint descriptors remain unread until
-PACKET-006 owns host routing.
+lifecycle methods are refused. API endpoint descriptors register into the generation table. The host owns
+`/api/plugins/{plugin_id}/{path:path}` permanently. Generation swing changes
+the dispatcher, not the FastAPI graph.
 
 ### Resource requirements — 4 fields
 

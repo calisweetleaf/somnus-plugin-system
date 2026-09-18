@@ -37,6 +37,7 @@ somnus-plugin-system/
 ├── host_protocols.py          HOST BOUNDARY — Protocol contracts for embedding system
 ├── host_capabilities.py       Object-capability façade + execution domains
 ├── plugin_worker.py           Isolated worker process + parent handle
+├── plugin_lifecycle.py        Zip-safe install, generations, host-route descriptors
 ├── plugin_base.py             CANONICAL — manifest, lifecycle, exported actions
 ├── plugin_manager.py          LOADER — façade assembly, domain-aware load
 ├── security.py        914 L   Trust boundary: AST analysis, sandbox, crypto validation
@@ -56,8 +57,8 @@ somnus-plugin-system/
 │   ├── PACKET-003-host-boundary-realization.md      LANDED
 │   ├── PACKET-004-reference-plugin.md               LANDED
 │   ├── PACKET-005-execution-boundary.md             LANDED
-│   ├── PACKET-006-transactional-lifecycle.md        ACTIVE
-│   └── PACKET-007-truth-harness.md                  QUEUED
+│   ├── PACKET-006-transactional-lifecycle.md        LANDED
+│   └── PACKET-007-truth-harness.md                  ACTIVE
 │
 ├── .claude/
 │   ├── settings.json                        Permissions derived from THIS layout

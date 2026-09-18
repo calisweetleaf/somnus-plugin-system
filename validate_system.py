@@ -107,6 +107,7 @@ def check_import_all_modules() -> CheckResult:
         "orchestration",
         "hot_reload",
         "marketplace",
+        "plugin_lifecycle",
     ]
     results = {}
     for mod_name in modules:
@@ -963,6 +964,189 @@ def check_isolated_timeout_kills() -> CheckResult:
     )
 
 
+def _zip_plugin_tree(source: Path, archive: Path) -> None:
+    import zipfile
+
+    with zipfile.ZipFile(archive, "w") as handle:
+        for path in source.rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts:
+                handle.write(path, path.relative_to(source))
+
+
+@timed_check("zip_slip_rejected")
+def check_zip_slip_rejected() -> CheckResult:
+    """Zip members with .. or absolute paths are rejected before extract."""
+    import tempfile
+    import zipfile
+    from plugin_lifecycle import inspect_zip_members, extract_zip_safe, ZipSlipError
+    from marketplace import MarketplaceConfig, PluginInstaller
+    from fastapi import FastAPI
+    from plugin_manager import PluginManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        archive = root / "slip.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("../evil.py", "print('nope')")
+            handle.writestr("/tmp/evil.py", "print('also-nope')")
+        reasons = inspect_zip_members(archive)
+        extract_failed = False
+        try:
+            extract_zip_safe(archive, root / "out")
+        except ZipSlipError:
+            extract_failed = True
+        manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+        installer = PluginInstaller(manager, manager.security_manager, MarketplaceConfig())
+        success, message = asyncio.run(installer.install_from_archive(archive))
+        escaped = list((root / "out").rglob("evil.py")) if (root / "out").exists() else []
+        if not reasons or not extract_failed or success or escaped:
+            return CheckResult(
+                name="",
+                status="fail",
+                detail=f"reasons={reasons} extract_failed={extract_failed} success={success} escaped={escaped} msg={message}",
+            )
+        return CheckResult(
+            name="",
+            status="pass",
+            detail=f"zip-slip rejected before extract: {message}",
+            extra={"reasons": reasons, "message": message},
+        )
+
+
+@timed_check("staged_install_and_failed_n1")
+def check_staged_install_and_failed_n1() -> CheckResult:
+    """Local archive install boot-probes; failed N+1 leaves generation N serving."""
+    import tempfile
+    from fastapi import FastAPI
+    from marketplace import MarketplaceConfig, PluginInstaller
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("verified_probe", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "verified.zip"
+            _zip_plugin_tree(PROJECT_ROOT / "test" / "harness_plugins" / "verified_probe", archive)
+            broken = root / "broken.zip"
+            _zip_plugin_tree(PROJECT_ROOT / "test" / "harness_plugins" / "broken_probe", broken)
+            manager = PluginManager(FastAPI(), HarnessMemoryManager(), HarnessSecurityEnforcer(), root)
+            installer = PluginInstaller(manager, manager.security_manager, MarketplaceConfig())
+            ok, msg = await installer.install_from_archive(archive)
+            first_gen = manager.generations.current.get(plugin_id)
+            live = (root / "installed" / "verified_probe")
+            network = await installer.install_from_marketplace("anything")
+            failed, fail_msg = await installer.install_from_archive(broken)
+            import shutil
+            n1_tree = root / "n1_broken"
+            shutil.copytree(PROJECT_ROOT / "test" / "harness_plugins" / "verified_probe", n1_tree)
+            (n1_tree / "plugin.py").write_text(
+                (PROJECT_ROOT / "test" / "harness_plugins" / "broken_probe" / "plugin.py").read_text()
+            )
+            incoming = await manager.build_generation(n1_tree, expected_id=plugin_id)
+            still = manager.active_plugins.get(plugin_id)
+            after = manager.generations.current.get(plugin_id)
+            await manager.unload_plugin(plugin_id)
+            return {
+                "installed": ok,
+                "install_message": msg,
+                "generation": None if first_gen is None else first_gen.generation,
+                "live_is_link": live.is_symlink(),
+                "network_disabled": (not network[0]) and "disabled" in network[1],
+                "broken_install": failed,
+                "n1": incoming,
+                "still_loaded": still is not None,
+                "same_generation": after is first_gen,
+                "fail_msg": fail_msg,
+            }
+
+    outcome = asyncio.run(run())
+    if not (
+        outcome["installed"]
+        and outcome["live_is_link"]
+        and outcome["network_disabled"]
+        and outcome["n1"] is None
+        and outcome["still_loaded"]
+        and outcome["same_generation"]
+    ):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=f"staged install g{outcome['generation']}; failed N+1 left live serving",
+        extra=outcome,
+    )
+
+
+@timed_check("stable_host_route")
+def check_stable_host_route() -> CheckResult:
+    """Host owns /api/plugins/{id}/{path}; generation swing does not include_router."""
+    from fastapi import FastAPI
+    from plugin_base import plugin_identity
+    from plugin_manager import PluginManager
+
+    plugin_id = plugin_identity("example_plugin", "1.0.0")
+
+    async def run() -> Dict[str, Any]:
+        app = FastAPI()
+        manager = PluginManager(app, HarnessMemoryManager(), HarnessSecurityEnforcer(), PROJECT_ROOT)
+        await manager.discover_and_load_plugins()
+        plugin = manager.active_plugins[plugin_id]
+        generation = manager.generations.current[plugin_id]
+        class _Request:
+            method = "GET"
+        health = await manager.dispatch_plugin_http(plugin_id, "health", _Request())
+        ping = await manager.dispatch_plugin_http(plugin_id, "ping", _Request())
+        reloaded = await manager.reload_plugin(plugin_id)
+        after = manager.generations.current[plugin_id]
+        ping2 = await manager.dispatch_plugin_http(plugin_id, "ping", _Request())
+        def _dump(value: Any) -> Any:
+            return value.model_dump() if hasattr(value, "model_dump") else value
+        host_paths = [
+            getattr(route, "path", "")
+            for route in app.router.routes
+            if "{path:path}" in getattr(route, "path", "")
+        ]
+        included = any(
+            getattr(route, "path", "").startswith(f"/api/plugins/{plugin_id}/health")
+            for route in app.router.routes
+        )
+        await manager.unload_plugin(plugin_id)
+        return {
+            "health": _dump(health),
+            "ping": _dump(ping),
+            "reloaded": reloaded,
+            "generation_before": generation.generation,
+            "generation_after": after.generation,
+            "swung": after.generation != generation.generation,
+            "ping2": _dump(ping2),
+            "host_paths": host_paths,
+            "mutated_include": included,
+            "same_instance": after.instance is plugin,
+        }
+
+    outcome = asyncio.run(run())
+    if not (
+        outcome["reloaded"]
+        and outcome["swung"]
+        and not outcome["same_instance"]
+        and not outcome["mutated_include"]
+        and outcome["host_paths"]
+        and outcome["ping"]
+    ):
+        return CheckResult(name="", status="fail", detail=str(outcome))
+    return CheckResult(
+        name="",
+        status="pass",
+        detail=(
+            f"host route served health/ping; reload swung g{outcome['generation_before']}"
+            f"→g{outcome['generation_after']} without include_router"
+        ),
+        extra=outcome,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
@@ -1003,6 +1187,9 @@ def main() -> int:
         check_capability_denial,
         check_exported_action_deny,
         check_isolated_timeout_kills,
+        check_zip_slip_rejected,
+        check_staged_install_and_failed_n1,
+        check_stable_host_route,
     ]
 
     results: List[CheckResult] = []
@@ -1059,7 +1246,7 @@ def main() -> int:
         },
     }
 
-    (runs_dir / "result.json").write_text(json.dumps(payload, indent=2))
+    (runs_dir / "result.json").write_text(json.dumps(payload, indent=2, default=str))
     (runs_dir / "result.md").write_text(_render_md(payload))
 
     print(f"\n  Artifacts written to: {runs_dir}/")

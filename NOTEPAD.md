@@ -343,3 +343,17 @@ Additional corrections from review, not from the cold agent:
 - Next agent: Execute PACKET-006 transactional lifecycle.
 - Hazards: marketplace extractall still unsafe; hot reload still in-place;
   FastAPI still mutates route endpoints.
+
+### 2026-09-18 23:26 UTC — Stilgar (Cursor Grok 4.6) — Transactional Lifecycle
+
+- Base: `1429bc1`
+- Did: Landed PACKET-006. Zip members with `..`, absolute paths, or links are
+  rejected before extract. Local install stages, boot-probes, then promotes a
+  live symlink. Reload builds N+1, swings the generation table, then drains N.
+  Host owns `/api/plugins/{plugin_id}/{path:path}`. Watchdog schedules onto the
+  manager loop. Marketplace network path stays disabled.
+- Validation: `.venv/bin/python validate_system.py` — 25/25 PASS
+- Proof facts: zip-slip rejected; staged install g1; failed N+1 left live
+  serving; host route reload swung g1→g2 without include_router
+- Next agent: Execute PACKET-007 truth harness.
+- Hazards: none remaining on the local install path.

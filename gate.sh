@@ -27,7 +27,7 @@ echo "=============================================================="
 echo
 echo "[1] Structural integrity"
 
-EXPECTED_MODULES="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker"
+EXPECTED_MODULES="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker plugin_lifecycle"
 missing=""
 for m in $EXPECTED_MODULES; do [ -f "$m.py" ] || missing="$missing $m.py"; done
 if [ -z "$missing" ]; then ok "all expected root modules present"
@@ -103,7 +103,7 @@ fi
 # ------------------------------------------------- foreign artifact drift
 echo
 echo "[5b] Foreign artifact drift"
-KNOWN="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker validate_system"
+KNOWN="plugin_base plugin_manager security discovery orchestration hot_reload marketplace host_protocols host_capabilities plugin_worker plugin_lifecycle validate_system"
 STRAY=""
 for f in $(git ls-files --others --exclude-standard -- '*.py' 2>/dev/null); do
   case "$f" in installed/*|test/harness_plugins/*|test/system/runs/*) continue ;; esac

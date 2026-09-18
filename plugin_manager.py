@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from discovery import PluginDiscovery, PluginFileWatcher
@@ -32,6 +32,11 @@ from plugin_base import (
     PluginState,
     PluginType,
     plugin_identity,
+)
+from plugin_lifecycle import (
+    EndpointDescriptor,
+    GenerationTable,
+    PluginGeneration,
 )
 from plugin_worker import IsolatedPluginHandle
 from security import SecurityLevel, SecurityManager
@@ -106,12 +111,15 @@ class PluginManager:
         self.plugin_routers: Dict[str, APIRouter] = {}
         self.plugin_sandboxes: Dict[str, Any] = {}
         self.plugin_domains: Dict[str, ExecutionDomain] = {}
+        self.generations = GenerationTable()
+        self._host_routes_mounted = False
 
         self.security_manager = SecurityManager(security_level=security_level)
         self.discovery = PluginDiscovery(self.plugin_base_dir)
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-mgr")
 
         self._initialize_directories()
+        self._mount_host_plugin_routes()
         logger.info("Plugin manager initialized at %s", self.plugin_base_dir)
 
     def _initialize_directories(self) -> None:
@@ -150,27 +158,36 @@ class PluginManager:
             logger.error("Plugin path not found for %s", plugin_id)
             return False
 
+        generation = await self.build_generation(plugin_path, expected_id=plugin_id)
+        if generation is None:
+            return False
+        await self.swing_generation(generation)
+        logger.info("Plugin %s loaded and activated in domain %s", plugin_id, generation.instance.execution_domain)
+        return True
+
+    async def build_generation(
+        self,
+        plugin_path: Path,
+        expected_id: Optional[str] = None,
+    ) -> Optional[PluginGeneration]:
+        """Construct generation N+1 without taking the live dispatcher."""
         manifest_path = plugin_path / "manifest.json"
         if not manifest_path.exists():
-            logger.error("Manifest not found for plugin %s", plugin_id)
-            return False
+            logger.error("Manifest not found at %s", plugin_path)
+            return None
 
         try:
             manifest = PluginManifest.from_file(manifest_path)
-            expected_id = plugin_identity(manifest.name, manifest.version)
-            if expected_id != plugin_id:
-                logger.error(
-                    "Plugin id mismatch: discovery=%s manifest=%s",
-                    plugin_id,
-                    expected_id,
-                )
-                return False
+            plugin_id = plugin_identity(manifest.name, manifest.version)
+            if expected_id is not None and expected_id != plugin_id:
+                logger.error("Plugin id mismatch: expected=%s manifest=%s", expected_id, plugin_id)
+                return None
 
             report_safe, issues = await self.security_manager.validate_plugin(plugin_path, manifest)
             domain = select_execution_domain(manifest)
             if not report_safe and domain != ExecutionDomain.ISOLATED:
                 logger.error("Plugin %s failed security validation: %s", plugin_id, issues)
-                return False
+                return None
             if not report_safe and domain == ExecutionDomain.ISOLATED:
                 logger.warning(
                     "Plugin %s failed the host-integrated safety bar and will load isolated: %s",
@@ -184,37 +201,67 @@ class PluginManager:
                 manifest,
                 plugin_id,
             )
-            self.plugin_domains[plugin_id] = domain
+            generation_number = self.generations.next_number(plugin_id)
+            module_name = f"somnus_plugin_{plugin_id}_g{generation_number}"
 
             if domain == ExecutionDomain.ISOLATED:
                 plugin_instance = await self._load_isolated_plugin(plugin_path, plugin_id, manifest, facade)
             else:
-                plugin_instance = await self._load_in_process_plugin(plugin_path, plugin_id, manifest, facade)
+                plugin_instance = await self._load_in_process_plugin(
+                    plugin_path, plugin_id, manifest, facade, module_name=module_name
+                )
 
             if plugin_instance is None:
-                self.plugin_domains.pop(plugin_id, None)
-                return False
+                return None
 
             if not await plugin_instance.initialize():
                 logger.error("Plugin %s initialization failed", plugin_id)
                 await self._teardown_failed_load(plugin_id, plugin_instance)
-                return False
+                return None
 
-            self.active_plugins[plugin_id] = plugin_instance
-            if domain != ExecutionDomain.ISOLATED:
-                await self._register_plugin_api(plugin_id, plugin_instance)
+            endpoints = await self._collect_plugin_endpoints(plugin_id, plugin_instance, plugin_path, module_name)
 
             if not await plugin_instance.activate():
                 logger.error("Plugin %s activation failed", plugin_id)
-                await self.unload_plugin(plugin_id)
-                return False
+                await self._teardown_failed_load(plugin_id, plugin_instance)
+                return None
 
-            logger.info("Plugin %s loaded and activated in domain %s", plugin_id, domain.value)
-            return True
-
+            self.plugin_domains[plugin_id] = domain
+            return PluginGeneration(
+                generation=generation_number,
+                plugin_id=plugin_id,
+                instance=plugin_instance,
+                path=Path(plugin_path),
+                endpoints=endpoints,
+                module_name=module_name,
+            )
         except Exception as exc:
-            logger.error("Failed to load plugin %s: %s", plugin_id, exc)
-            return False
+            logger.error("Failed to build generation from %s: %s", plugin_path, exc)
+            return None
+
+    async def swing_generation(self, generation: PluginGeneration) -> None:
+        previous = self.generations.swing(generation)
+        self.active_plugins[generation.plugin_id] = generation.instance
+        self.plugin_domains[generation.plugin_id] = select_execution_domain(generation.instance.manifest)
+        if previous is not None:
+            await self.drain_generation(previous)
+            dependents = self.discovery.get_plugin_dependents(generation.plugin_id)
+            for dependent_id in self.discovery.dependency_resolver.get_load_order(dependents):
+                if dependent_id != generation.plugin_id and dependent_id in self.active_plugins:
+                    await self.reload_plugin(dependent_id)
+
+    async def drain_generation(self, generation: PluginGeneration) -> None:
+        instance = generation.instance
+        try:
+            if instance.state in (PluginState.ACTIVE, PluginState.PROCESSING, PluginState.SUSPENDED):
+                await instance.deactivate()
+            await instance.cleanup()
+        except Exception as exc:
+            logger.error("Drain failed for %s g%s: %s", generation.plugin_id, generation.generation, exc)
+            if hasattr(instance, "terminate_worker"):
+                instance.terminate_worker()
+        sys.modules.pop(generation.module_name, None)
+        sys.modules.pop(f"{generation.module_name}_api", None)
 
     async def _load_in_process_plugin(
         self,
@@ -222,8 +269,9 @@ class PluginManager:
         plugin_id: str,
         manifest: PluginManifest,
         facade: HostCapabilityFacade,
+        module_name: Optional[str] = None,
     ) -> Optional[PluginBase]:
-        plugin_module = await self._load_plugin_module(plugin_path, plugin_id)
+        plugin_module = await self._load_plugin_module(plugin_path, plugin_id, module_name=module_name)
         if not plugin_module:
             return None
         plugin_class = getattr(plugin_module, "Plugin", None)
@@ -273,7 +321,12 @@ class PluginManager:
         self.loaded_modules.pop(plugin_id, None)
         self.plugin_domains.pop(plugin_id, None)
 
-    async def _load_plugin_module(self, plugin_path: Path, plugin_id: str) -> Optional[Any]:
+    async def _load_plugin_module(
+        self,
+        plugin_path: Path,
+        plugin_id: str,
+        module_name: Optional[str] = None,
+    ) -> Optional[Any]:
         plugin_file = plugin_path / "plugin.py"
         if not plugin_file.exists():
             logger.error("Plugin file not found: %s", plugin_file)
@@ -281,7 +334,7 @@ class PluginManager:
 
         try:
             spec = importlib.util.spec_from_file_location(
-                f"somnus_plugin_{plugin_id}",
+                module_name or f"somnus_plugin_{plugin_id}",
                 plugin_file,
             )
             if spec is None or spec.loader is None:
@@ -296,57 +349,84 @@ class PluginManager:
             logger.error("Failed to load plugin module %s: %s", plugin_id, exc)
             return None
 
-    async def _register_plugin_api(self, plugin_id: str, plugin_instance: PluginBase) -> None:
-        plugin_path = self.discovery.get_plugin_path(plugin_id)
-        if plugin_path is None:
+    def _mount_host_plugin_routes(self) -> None:
+        if self._host_routes_mounted:
             return
+
+        @self.app.api_route(
+            "/api/plugins/{plugin_id}/{path:path}",
+            methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        )
+        async def plugin_host_dispatch(plugin_id: str, path: str, request: Request) -> Any:
+            return await self.dispatch_plugin_http(plugin_id, path, request)
+
+        self._host_routes_mounted = True
+
+    async def dispatch_plugin_http(self, plugin_id: str, path: str, request: Request) -> Any:
+        generation = self.generations.current.get(plugin_id)
+        if generation is None:
+            raise HTTPException(status_code=404, detail="plugin not loaded")
+        normalized = path.strip("/")
+        descriptor = generation.endpoints.get((request.method.upper(), normalized))
+        if descriptor is None:
+            raise HTTPException(status_code=404, detail=f"no {request.method} /{normalized}")
+        import inspect
+
+        parameters = inspect.signature(descriptor.handler).parameters
+        kwargs: Dict[str, Any] = {}
+        if "plugin_instance" in parameters:
+            kwargs["plugin_instance"] = generation.instance
+        if "request" in parameters:
+            kwargs["request"] = request
+        return await descriptor.handler(**kwargs)
+
+    async def _collect_plugin_endpoints(
+        self,
+        plugin_id: str,
+        plugin_instance: PluginRuntime,
+        plugin_path: Path,
+        module_name: str,
+    ) -> Dict[tuple, EndpointDescriptor]:
+        endpoints: Dict[tuple, EndpointDescriptor] = {}
         api_module_path = plugin_path / "api" / "__init__.py"
         if not api_module_path.exists():
-            return
+            return endpoints
 
         try:
             api_dir = api_module_path.parent
             spec = importlib.util.spec_from_file_location(
-                f"somnus_plugin_{plugin_id}_api",
+                f"{module_name}_api",
                 api_module_path,
                 submodule_search_locations=[str(api_dir)],
             )
             if spec is None or spec.loader is None:
-                return
+                return endpoints
 
             api_module = importlib.util.module_from_spec(spec)
             sys.modules[spec.name] = api_module
             spec.loader.exec_module(api_module)
-
             if not hasattr(api_module, "router"):
-                return
+                return endpoints
 
             router = api_module.router
+            self.plugin_routers[plugin_id] = router
             for route in router.routes:
-                if not hasattr(route, "endpoint"):
+                if not hasattr(route, "endpoint") or not hasattr(route, "methods"):
                     continue
                 original_endpoint = route.endpoint
-
-                async def wrapped_endpoint(
-                    *args: Any,
-                    _original=original_endpoint,
-                    _instance=plugin_instance,
-                    **kwargs: Any,
-                ):
-                    kwargs["plugin_instance"] = _instance
-                    return await _original(*args, **kwargs)
-
-                route.endpoint = wrapped_endpoint
-
-            self.app.include_router(
-                router,
-                prefix=f"/api/plugins/{plugin_id}",
-                tags=[f"Plugin: {plugin_instance.manifest.name}"],
-            )
-            self.plugin_routers[plugin_id] = router
-            logger.info("Registered API endpoints for plugin %s", plugin_id)
+                route_path = getattr(route, "path", "").strip("/")
+                for method in route.methods:
+                    if method in {"HEAD", "OPTIONS"}:
+                        continue
+                    endpoints[(method.upper(), route_path)] = EndpointDescriptor(
+                        method=method.upper(),
+                        path=route_path,
+                        handler=original_endpoint,
+                    )
+            logger.info("Collected %s host endpoints for %s", len(endpoints), plugin_id)
         except Exception as exc:
-            logger.error("Failed to register API for plugin %s: %s", plugin_id, exc)
+            logger.error("Failed to collect API endpoints for %s: %s", plugin_id, exc)
+        return endpoints
 
     async def unload_plugin(self, plugin_id: str) -> bool:
         if plugin_id not in self.active_plugins:
@@ -366,10 +446,11 @@ class PluginManager:
             if plugin_id in self.plugin_routers:
                 del self.plugin_routers[plugin_id]
             del self.active_plugins[plugin_id]
+            retired = self.generations.drop(plugin_id)
+            if retired is not None:
+                sys.modules.pop(retired.module_name, None)
+                sys.modules.pop(f"{retired.module_name}_api", None)
 
-            module_name = f"somnus_plugin_{plugin_id}"
-            sys.modules.pop(module_name, None)
-            sys.modules.pop(f"{module_name}_api", None)
             self.loaded_modules.pop(plugin_id, None)
             self.plugin_domains.pop(plugin_id, None)
             sandbox = self.plugin_sandboxes.pop(plugin_id, None)
@@ -383,12 +464,30 @@ class PluginManager:
             return False
 
     async def reload_plugin(self, plugin_id: str) -> bool:
+        """Blue/green reload. N keeps serving until N+1 swings."""
         logger.info("Reloading plugin %s", plugin_id)
-        if plugin_id in self.active_plugins:
-            if not await self.unload_plugin(plugin_id):
-                return False
         await self.discovery.refresh_cache()
-        return await self.load_plugin(plugin_id)
+        plugin_path = self.discovery.get_plugin_path(plugin_id)
+        if plugin_path is None:
+            return False
+        current = self.generations.current.get(plugin_id)
+        checkpoint_id = None
+        if current is not None:
+            try:
+                checkpoint_id = await current.instance.checkpoint_state()
+            except Exception as exc:
+                logger.warning("Checkpoint before reload failed for %s: %s", plugin_id, exc)
+        incoming = await self.build_generation(plugin_path, expected_id=plugin_id)
+        if incoming is None:
+            logger.error("N+1 boot probe failed for %s; live generation remains", plugin_id)
+            return False
+        if checkpoint_id:
+            try:
+                await incoming.instance.restore_checkpoint(checkpoint_id)
+            except Exception as exc:
+                logger.warning("State restore onto N+1 failed for %s: %s", plugin_id, exc)
+        await self.swing_generation(incoming)
+        return True
 
     async def activate_plugin(self, plugin_id: str) -> bool:
         if plugin_id not in self.active_plugins:

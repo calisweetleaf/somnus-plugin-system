@@ -231,6 +231,17 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — TRANSACTIONAL LIFECYCLE LANDED
+
+**Keys:** `PACKET-006` · `inspect_zip_members` · `promote_live_link` · `GenerationTable` · `dispatch_plugin_http`
+
+- **State:** Local install is zip-safe and staged. Reload is blue/green. Host
+  route is stable. 25/25 harness PASS.
+- **Next read:** `STATE.md`, `packets/PACKET-007-truth-harness.md`
+- **Open:** adversarial labels + mechanical STATE.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

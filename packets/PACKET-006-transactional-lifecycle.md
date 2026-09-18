@@ -1,7 +1,7 @@
 # PACKET-006 — Transactional Lifecycle
 
 **Owner:** next executing agent
-**Status:** QUEUED
+**Status:** LANDED
 **Depends on:** PACKET-005
 **Size:** one session
 **Priority:** high — install/reload/routing must share one generation model

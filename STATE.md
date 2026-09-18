@@ -5,7 +5,7 @@
 > **Refresh on every state change.** A stale `STATE.md` is worse than none.
 
 **Last refreshed:** 2026-09-18
-**Working tree:** PACKET-005 landing on `cursor/plugin-runtime-heartbeat-863f`
+**Working tree:** PACKET-006 landing on `cursor/plugin-runtime-heartbeat-863f`
 
 ---
 
@@ -40,13 +40,11 @@ production loader loads a canonical plugin through a capability façade.
 | PACKET-003 | LANDED |
 | PACKET-004 | LANDED |
 | PACKET-005 | LANDED — execution boundary |
-| PACKET-006 | ACTIVE — transactional lifecycle |
-| PACKET-007 | QUEUED — truth harness |
+| PACKET-006 | LANDED — transactional lifecycle |
+| PACKET-007 | ACTIVE — truth harness |
 
 ## 4. What must not be assumed
 
-- Marketplace `extractall` is still unsafe. Network path stays disabled.
-- Hot reload is still in-place, not blue/green.
-- FastAPI still mounts plugin routers; host-owned dispatch is PACKET-006.
-- `validate_system.py` 22/22 is component + production path + domain proofs, not adversarial coverage.
+- Marketplace network path stays disabled.
+- `validate_system.py` 25/25 is component + production + domain + lifecycle proofs, not the full adversarial suite until PACKET-007 labels it.
 - In-process timeouts record `NOT TERMINABLE`. They do not kill the function.
