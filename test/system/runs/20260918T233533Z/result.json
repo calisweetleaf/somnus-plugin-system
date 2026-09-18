@@ -1,0 +1,427 @@
+{
+  "harness": "somnus-plugin-system production validation",
+  "timestamp": "20260918T233533Z",
+  "python_version": "3.12.3",
+  "checks": [
+    {
+      "name": "import_host_protocols",
+      "status": "pass",
+      "duration_ms": 1.79,
+      "detail": "all 7 protocol symbols present",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "import_plugin_base",
+      "status": "pass",
+      "duration_ms": 155.84,
+      "detail": "all 15 canonical types present",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "import_all_modules",
+      "status": "pass",
+      "duration_ms": 115.0,
+      "detail": "all 11 modules import cleanly",
+      "kind": "component",
+      "extra": {
+        "host_protocols": "pass",
+        "host_capabilities": "pass",
+        "plugin_worker": "pass",
+        "plugin_base": "pass",
+        "plugin_manager": "pass",
+        "security": "pass",
+        "discovery": "pass",
+        "orchestration": "pass",
+        "hot_reload": "pass",
+        "marketplace": "pass",
+        "plugin_lifecycle": "pass"
+      }
+    },
+    {
+      "name": "lineage_convergence",
+      "status": "pass",
+      "duration_ms": 0.02,
+      "detail": "canonical types unique; loader imports plugin_base and discovery",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "capability_lattice",
+      "status": "pass",
+      "duration_ms": 0.02,
+      "detail": "join(3), meet(1), universe(8), subsumes, gap \u2014 all correct",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "ewma_metrics",
+      "status": "pass",
+      "duration_ms": 0.02,
+      "detail": "EWMA mean=3.227, std=1.556, count=5",
+      "kind": "component",
+      "extra": {
+        "mean": 3.2269,
+        "std": 1.5562186189607166,
+        "min": 1.0,
+        "max": 5.0,
+        "count": 5.0
+      }
+    },
+    {
+      "name": "state_transitions",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "state graph has 18 valid edges across 8 states",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "content_addressed_checkpoint",
+      "status": "pass",
+      "duration_ms": 0.05,
+      "detail": "Merkle dedup works, hash=cdfa746d2bc62ee4..., checkpoint_id=ckpt_cdfa746d2bc62ee4_1",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "manifest_validation",
+      "status": "pass",
+      "duration_ms": 0.23,
+      "detail": "manifest validates, content_hash=39c46817531a9c12...",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "plugin_lifecycle_async",
+      "status": "pass",
+      "duration_ms": 2.08,
+      "detail": "full lifecycle: init->ready->active->checkpoint->cleanup->terminated, events=['initialized', 'activated', 'checkpoint_created', 'terminated'], ckpt=ckpt_25817870e0dd6e4c_1",
+      "kind": "component",
+      "extra": {
+        "events": [
+          "initialized",
+          "activated",
+          "checkpoint_created",
+          "terminated"
+        ],
+        "checkpoint_id": "ckpt_25817870e0dd6e4c_1",
+        "final_state": "terminated",
+        "info_keys": [
+          "author",
+          "capabilities",
+          "consciousness_coherence",
+          "consciousness_level",
+          "created_at",
+          "description",
+          "execution_domain",
+          "exported_actions",
+          "last_accessed",
+          "metrics",
+          "name",
+          "permissions",
+          "plugin_id",
+          "plugin_type",
+          "resource_usage",
+          "status",
+          "version"
+        ]
+      }
+    },
+    {
+      "name": "priority_queue_order",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "priority order correct: ['realtime', 'critical', 'high', 'normal', 'low']",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "security_import_fixed",
+      "status": "pass",
+      "duration_ms": 0.01,
+      "detail": "security.py imports PluginPermission from plugin_base \u2014 the predicted ImportError at security.py:34 is resolved",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "hot_reload_no_pickle",
+      "status": "pass",
+      "duration_ms": 0.07,
+      "detail": "JSON-only deserialization, pickle payloads rejected",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "resource_monitor_real_measurement",
+      "status": "pass",
+      "duration_ms": 0.02,
+      "detail": "real RSS measurement: 61MB, not the hardcoded zero from the original implementation",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "taint_tracking",
+      "status": "pass",
+      "duration_ms": 0.13,
+      "detail": "taint tracking: direct flow detected, safe code clean, propagation through assignment works",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "bloom_filter",
+      "status": "pass",
+      "duration_ms": 9.81,
+      "detail": "bloom filter: 100 items, 0 false negatives, fp_rate=0.0100 (100/10000), bits=958, hashes=6",
+      "kind": "component",
+      "extra": {
+        "bits": 958,
+        "hashes": 6,
+        "items": 100,
+        "estimated_fp_rate": 0.010166,
+        "bytes_used": 120
+      }
+    },
+    {
+      "name": "circuit_breaker",
+      "status": "pass",
+      "duration_ms": 20.2,
+      "detail": "circuit breaker: closed->open(3 failures)->half_open(timeout)->closed(3 successes)",
+      "kind": "component",
+      "extra": {
+        "state": "closed",
+        "failure_count": 0,
+        "success_count": 3,
+        "current_timeout_s": 0.01,
+        "consecutive_opens": 0
+      }
+    },
+    {
+      "name": "host_boundary_protocol_conformance",
+      "status": "pass",
+      "duration_ms": 0.04,
+      "detail": "runtime_checkable Protocol verification works for MemoryManager",
+      "kind": "component",
+      "extra": {}
+    },
+    {
+      "name": "production_load_path",
+      "status": "pass",
+      "duration_ms": 33.55,
+      "detail": "production path: discover\u2192security\u2192load example_plugin_1.0.0 as Plugin, ping=1, checkpoint ckpt_c0639d01a6b9f091_1, restore, unload",
+      "kind": "e2e",
+      "extra": {
+        "ok": true,
+        "plugin_id": "example_plugin_1.0.0",
+        "class": "Plugin",
+        "canonical": true,
+        "ping": {
+          "plugin_id": "example_plugin_1.0.0",
+          "note": "production-path",
+          "pings": 1,
+          "state": "active"
+        },
+        "checkpoint_id": "ckpt_c0639d01a6b9f091_1",
+        "deduped_checkpoint_id": "ckpt_c0639d01a6b9f091_1",
+        "same_id_on_duplicate": true,
+        "restored": true,
+        "unloaded": true
+      }
+    },
+    {
+      "name": "capability_denial",
+      "status": "pass",
+      "duration_ms": 5.65,
+      "detail": "verified domain denied WRITE_MEMORY: Plugin verified_probe_1.0.0 denied store_memory: missing permission write_memory",
+      "kind": "e2e",
+      "extra": {
+        "ok": true,
+        "denied": true,
+        "error": "Plugin verified_probe_1.0.0 denied store_memory: missing permission write_memory",
+        "domain": "verified",
+        "network": null,
+        "filesystem": null
+      }
+    },
+    {
+      "name": "exported_action_deny",
+      "status": "pass",
+      "duration_ms": 16.4,
+      "detail": "orchestrator denied initialize and dispatched ping with kwargs",
+      "kind": "e2e",
+      "extra": {
+        "denied_success": false,
+        "denied_error": "ActionNotExported",
+        "ping_success": true,
+        "ping": {
+          "plugin_id": "example_plugin_1.0.0",
+          "note": "exported",
+          "pings": 1,
+          "state": "active"
+        }
+      }
+    },
+    {
+      "name": "isolated_timeout_kills",
+      "status": "pass",
+      "duration_ms": 1039.59,
+      "detail": "isolated hang killed pid 6584; crash stayed in worker (isolated crash)",
+      "kind": "e2e",
+      "extra": {
+        "ok": true,
+        "pid_before": 6584,
+        "alive_before": true,
+        "alive_after": false,
+        "termination": "worker_terminated",
+        "hang_error": "isolated plugin isolated_probe_1.0.0 timed out",
+        "crash_error": "isolated crash",
+        "host_survived": true
+      }
+    },
+    {
+      "name": "zip_slip_rejected",
+      "status": "pass",
+      "duration_ms": 2.33,
+      "detail": "zip-slip rejected before extract: archive rejected before extract: path traversal: ../evil.py; absolute path: /tmp/evil.py",
+      "kind": "e2e",
+      "extra": {
+        "reasons": [
+          "path traversal: ../evil.py",
+          "absolute path: /tmp/evil.py"
+        ],
+        "message": "archive rejected before extract: path traversal: ../evil.py; absolute path: /tmp/evil.py"
+      }
+    },
+    {
+      "name": "staged_install_and_failed_n1",
+      "status": "pass",
+      "duration_ms": 12.97,
+      "detail": "staged install g1; failed N+1 left live serving",
+      "kind": "e2e",
+      "extra": {
+        "installed": true,
+        "install_message": "Installation completed successfully",
+        "generation": 1,
+        "live_is_link": true,
+        "network_disabled": true,
+        "broken_install": false,
+        "n1": null,
+        "still_loaded": true,
+        "same_generation": true,
+        "fail_msg": "boot probe failed; live generation unchanged"
+      }
+    },
+    {
+      "name": "stable_host_route",
+      "status": "pass",
+      "duration_ms": 24.46,
+      "detail": "host route served health/ping; reload swung g1\u2192g2 without include_router",
+      "kind": "e2e",
+      "extra": {
+        "health": {
+          "status": "ok",
+          "plugin_id": "example_plugin_1.0.0"
+        },
+        "ping": {
+          "plugin_id": "example_plugin_1.0.0",
+          "note": "ok",
+          "pings": 1,
+          "state": "active"
+        },
+        "reloaded": true,
+        "generation_before": 1,
+        "generation_after": 2,
+        "swung": true,
+        "ping2": {
+          "plugin_id": "example_plugin_1.0.0",
+          "note": "ok",
+          "pings": 2,
+          "state": "active"
+        },
+        "host_paths": [
+          "/api/plugins/{plugin_id}/{path:path}"
+        ],
+        "mutated_include": false,
+        "same_instance": false
+      }
+    },
+    {
+      "name": "malformed_signature",
+      "status": "pass",
+      "duration_ms": 2.96,
+      "detail": "malformed signature refused: signed plugin requires a host-supplied verification key / developer signature verification failed",
+      "kind": "e2e",
+      "extra": {
+        "no_key": [
+          false,
+          "signed plugin requires a host-supplied verification key"
+        ],
+        "bogus_key": [
+          false,
+          "developer signature verification failed"
+        ]
+      }
+    },
+    {
+      "name": "load_time_exception",
+      "status": "pass",
+      "duration_ms": 3.72,
+      "detail": "import-time exception stayed out of the host; nothing loaded",
+      "kind": "e2e",
+      "extra": {
+        "loaded": [],
+        "host_alive": true
+      }
+    },
+    {
+      "name": "dependency_cycle",
+      "status": "pass",
+      "duration_ms": 0.08,
+      "detail": "cycle broken into load order ['beta_1.0.0', 'alpha_1.0.0']",
+      "kind": "e2e",
+      "extra": {
+        "order": [
+          "beta_1.0.0",
+          "alpha_1.0.0"
+        ]
+      }
+    },
+    {
+      "name": "state_migration",
+      "status": "pass",
+      "duration_ms": 21.1,
+      "detail": "state migrated across g1\u2192g2 pings=1",
+      "kind": "e2e",
+      "extra": {
+        "first": 1,
+        "second": 2,
+        "pings": 1,
+        "swung": true
+      }
+    },
+    {
+      "name": "restart_recovery",
+      "status": "pass",
+      "duration_ms": 11.66,
+      "detail": "restart against the same install root reloaded verified_probe_1.0.0",
+      "kind": "e2e",
+      "extra": {
+        "installed": true,
+        "recovered": true,
+        "live": true
+      }
+    }
+  ],
+  "summary": {
+    "pass_count": 30,
+    "fail_count": 0,
+    "skip_count": 0,
+    "total_duration_ms": 1479.8,
+    "result": "PASS",
+    "component_pass": 18,
+    "component_total": 18,
+    "e2e_pass": 12,
+    "e2e_total": 12
+  }
+}

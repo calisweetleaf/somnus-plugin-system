@@ -3,18 +3,20 @@
 > **Normative.** This document owns the contract between somnus-plugin-system and whatever
 > larger system embeds it.
 >
-> **This is the most misread surface in the repository.** Three imports in this codebase do not
-> resolve here. They are **not broken imports.** They are the seam where this plugin substrate
-> attaches to a host. An agent that "fixes" them by vendoring stubs, writing mock modules, or
-> deleting the import lines has destroyed the cross-ecosystem contract that is the entire
-> purpose of this repository.
+> **This is the most misread surface in the repository.** The embedding seam is
+> `host_protocols.py` (PACKET-003 strategy 1). Donor `from core.*` / `from schemas.*`
+> imports are gone. An agent that "fixes" the seam by vendoring stubs, writing
+> mock modules, adding `try/except ImportError`, or reintroducing `from core.*`
+> has destroyed the cross-ecosystem contract that is the entire purpose of this
+> repository.
 >
 > Operator ruling, 2026-09-05: this package is designed to be embedded inside larger Somnus
-> systems. It will not be a standalone distribution. Declare the boundary; do not resolve it.
+> systems. It will not be a standalone distribution. Declare the boundary as Protocols;
+> do not vendor host implementations here.
 
 ---
 
-## 1. The contract — 3 modules, 7 symbols, 6 import sites
+## 1. The contract — 3 donor modules realized as 7 Protocol/enum/alias symbols
 
 ### `core.memory_core` — realized as `host_protocols` Protocol declarations
 
@@ -34,32 +36,30 @@ Import sites (LIVE, PACKET-003 strategy 1):
 
 | Method | Called at | Purpose |
 |---|---|---|
-| `create_context(...)` | `plugin_base.py:274-279` | Establishes the plugin's memory context during `initialize()` |
-| `store_memory(...)` | `plugin_base.py:444-446` (checkpointing), `plugin_manager.py:248-262` | Persists plugin state and plugin-namespaced data |
-| `retrieve_memory(...)` | `plugin_manager.py:264-282` | Reads plugin-namespaced data |
+| `create_context(...)` | `PluginBase.initialize` | Establishes the plugin's memory context |
+| `store_memory(...)` | façade / `framework_store_memory` during checkpoint | Persists plugin-owned canonical state |
+| `retrieve_memories(...)` | `PluginBase.restore_checkpoint` | Reads checkpoint rows by id |
 
 `MemoryType` must expose at least `USER`. `MemoryScope` must expose at least `USER`.
 
-> **Drift warning.** `plugin_base.py:444-446` carries an in-place hand-patch changing
-> `MemoryType.SYSTEM` → `MemoryType.USER` and `MemoryScope.PLUGIN` → `MemoryScope.USER`, with
-> the prior values still visible in the surrounding comments. The donor's memory API shifted
-> underneath this code and the repair was not completed. A host supplying `SYSTEM` and `PLUGIN`
-> variants would satisfy the original design; a host supplying only `USER` satisfies the current
-> source. **Confirm which your host provides before relying on checkpoint scoping.** See
-> `docs/DEFECT_INDEX.md` D-021.
+> **Checkpoint scoping.** Live checkpoint writes use `MemoryType.USER` /
+> `MemoryScope.USER`. The Protocol vocabulary still includes `SYSTEM` and
+> `PLUGIN`. Confirm which your host provides before relying on those variants.
+> See `docs/DEFECT_INDEX.md` D-021.
 
-Memory namespacing convention observed in the superseded lineage: `plugin:{plugin_id}`
-(`plugin_manager.py:248-282`).
+Memory namespacing convention: `plugin:{plugin_id}`. The host `MemoryManager` is
+held by `PluginManager` and handed to `HostCapabilityFacade`; plugins never
+receive the raw manager.
 
 ### `schemas.session` — realized as `host_protocols` type aliases
 
 | Symbol | Kind | Consumed at |
 |---|---|---|
-| `SessionID` | type alias (`str`) | `plugin_base.py`, `plugin_manager.py` |
-| `UserID` | type alias (`str`) | same |
+| `SessionID` | type alias (`str`) | `plugin_base.PluginContext` |
+| `UserID` | type alias (`str`) | `plugin_base.PluginContext` |
 
 **Required behavior.** Both are used as type annotations on `PluginContext`
-(`plugin_base.py:55-56`): `session_id: SessionID`, `user_id: UserID`. Any type the host uses to
+(`session_id: SessionID`, `user_id: UserID`). Any type the host uses to
 identify a session and a user satisfies this. There is no behavioral requirement beyond being
 constructible and comparable.
 

@@ -505,6 +505,15 @@ A generated map, a summary, or the router never owns behavior it merely describe
   in-process `_checkpoints` dict of generation N.
 - STATE.md mechanical block is generated. Humans write interpretation only.
 
+## 2026-09-18 — AUDITORS AFTER HEARTBEAT
+
+**Keys:** `SPEC.md` · `HOST_BOUNDARY.md` · `plugin-contract-auditor`
+
+- Source and reference plugin conform. Remaining findings were SPEC/HOST_BOUNDARY
+  citations (agent_actions unread, include_router story, ABC vs Protocol, 33-field
+  comment, stale donor-import header). Those surfaces were repaired after the
+  read-only reports. Host-boundary validator: clean bill, 0 donor imports.
+
 ---
 
 ## Memory Maintenance Notes

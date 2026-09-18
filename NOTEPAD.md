@@ -381,3 +381,14 @@ Additional corrections from review, not from the cold agent:
   no pytest suite by design).
 - Next agent: Embed this runtime in a host. Do not add more mechanisms.
 - Hazards: marketplace network path remains disabled.
+
+### 2026-09-18 23:33 UTC — Stilgar (Cursor Grok 4.6) — Contract/boundary audit repair
+
+- Base: `6c55ac7`
+- Did: Read-only `plugin-contract-auditor` and `host-boundary-validator` returned
+  SPEC/HOST_BOUNDARY citation drift, not runtime breaks. Repaired SPEC §§2/6/7/9,
+  HOST_BOUNDARY header and method table, host_protocols comments, and the
+  32-field manifest comment. Auditors wrote nothing; gate.sh refreshed the
+  mechanical probe while they ran.
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.

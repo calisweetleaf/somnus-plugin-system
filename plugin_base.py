@@ -430,13 +430,13 @@ class PluginMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Plugin manifest — the 33-field contract (32 original + plugin_type narrowed)
+# Plugin manifest — the 32-field contract (plugin_type and permissions narrowed)
 # ---------------------------------------------------------------------------
 
 class PluginManifest(BaseModel):
     """Enhanced plugin manifest with consciousness integration.
 
-    Pydantic-validated manifest with 33 fields. Malformed input raises.
+    Pydantic-validated manifest with 32 fields. Malformed input raises.
     This is the canonical manifest — the superseded dataclass manifest from
     plugin_manager.py has been deleted per PACKET-002.
     """

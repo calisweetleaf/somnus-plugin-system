@@ -254,6 +254,17 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — CONTRACT AUDIT AFTER 007
+
+**Keys:** `plugin-contract-auditor` · `host-boundary-validator` · SPEC §§7/9
+
+- **State:** Source clean. SPEC/HOST_BOUNDARY citations repaired to live
+  surfaces. Donor grep 0. Class counts 1/1/1/1.
+- **Next read:** `SPEC.md`, `HOST_BOUNDARY.md`
+- **Open:** host embedding.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.
