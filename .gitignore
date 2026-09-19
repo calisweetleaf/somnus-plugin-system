@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 # Environments
 /.venv/
 venv/
@@ -13,12 +14,18 @@ dist/
 /.vscode/
 /.remember/
 /.python_doctor/
+=======
+.venv/
+>>>>>>> Stashed changes
 __pycache__/
 *.py[cod]
-
-# Secrets — never commit
-.env
-.env.*
-*.pem
-*.key
-id_rsa*
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+*.log
+!test/**/runs/**/*.log
+!test/**/runs/**/result.log
+.cursor/hook-logs/
+.cursor/colony/TOPOLOGY_STALE
+.cursor/colony/COMPLETION_REMINDER.md
+.cursor/colony/stamps/
