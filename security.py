@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Any, Set, Tuple, Union
 import logging
 import json
 import zipfile
+from pathlib import PurePosixPath
 
 import aiofiles
 import cryptography
@@ -35,6 +36,78 @@ from cryptography.fernet import Fernet
 from plugin_base import PluginManifest, PluginPermission, PluginCapability
 
 logger = logging.getLogger(__name__)
+
+
+class ArchivePathError(ValueError):
+    """Raised when an archive member would write outside the destination."""
+
+
+def safe_extract_zip(
+    archive_path: Path,
+    dest_root: Path,
+    max_uncompressed_bytes: int = 100 * 1024 * 1024,
+) -> List[Path]:
+    """Extract a zip archive without following traversal, symlinks, or bombs.
+
+    Every member is resolved against `dest_root` before any byte is written.
+    Absolute paths, drive prefixes, `..` components, and symlink members are
+    rejected. The uncompressed-size cap is enforced on declared sizes before
+    extraction and on bytes actually copied during extraction.
+    """
+    dest_root.mkdir(parents=True, exist_ok=True)
+    root = dest_root.resolve()
+    written: List[Path] = []
+
+    def destination_for(member_name: str) -> Path:
+        normalized = member_name.replace("\\", "/")
+        if not normalized or normalized.endswith("/"):
+            # Directory entries are created via their children or explicitly below.
+            pass
+        if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+            raise ArchivePathError(f"absolute archive member refused: {member_name}")
+        parts = PurePosixPath(normalized).parts
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise ArchivePathError(f"traversal archive member refused: {member_name}")
+        target = root.joinpath(*parts).resolve()
+        if target != root and root not in target.parents:
+            raise ArchivePathError(f"archive member escapes destination: {member_name}")
+        return target
+
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        infos = archive.infolist()
+        declared = 0
+        for info in infos:
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                raise ArchivePathError(f"symlink archive member refused: {info.filename}")
+            destination_for(info.filename)
+            if not info.is_dir():
+                declared += info.file_size
+                if declared > max_uncompressed_bytes:
+                    raise ArchivePathError(
+                        f"archive uncompressed size {declared} exceeds cap {max_uncompressed_bytes}"
+                    )
+
+        copied = 0
+        for info in infos:
+            target = destination_for(info.filename)
+            if info.is_dir() or info.filename.endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info, "r") as source, open(target, "wb") as sink:
+                while True:
+                    chunk = source.read(65536)
+                    if not chunk:
+                        break
+                    copied += len(chunk)
+                    if copied > max_uncompressed_bytes:
+                        raise ArchivePathError(
+                            f"archive write exceeded cap {max_uncompressed_bytes}"
+                        )
+                    sink.write(chunk)
+            written.append(target)
+    return written
 
 
 @dataclass

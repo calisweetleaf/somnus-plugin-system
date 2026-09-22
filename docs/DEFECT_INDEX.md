@@ -3,7 +3,7 @@ Classification: INTERNAL
 Version: 1.0
 Date: 2026-09-05
 Author/Origin: Claude Code (execution arm), source-read only, no runtime executed
-Status: DRAFT
+Status: CLOSED — 2026-09-22. The mechanism descriptions below are the original evidence and are preserved. Runtime proof is `experiments/prove_defect_closure.py` (38/38).
 
 ## Scope and Evidence Standard
 
@@ -44,6 +44,35 @@ A repository-wide grep this session for `NotImplementedError`, `TODO`, `FIXME`, 
 | D-022 | HIGH | plugin_base.py / plugin_manager.py | The manifest shape with the richest declared surface is not the manifest shape the only reachable loader actually constructs. |
 
 Grouped by module: **orchestration.py** — D-001, D-002, D-009 through D-014 (8 defects). **marketplace.py** — D-003 through D-008, D-015 through D-018 (10 defects). **plugin_manager.py** — D-019 (1 defect, plus co-listed in D-022). **plugin_base.py** — D-020, D-021 (2 defects, plus co-listed in D-022). **Cross-lineage** — D-022 (1 defect).
+
+## Closure — 2026-09-22
+
+Every ID in the summary table is **CLOSED** in source. The sections below keep the original mechanism so the defect can be recognized if it returns. Do not treat those sections as the current behavior.
+
+| ID | Closure |
+|---|---|
+| D-001 | Drain order is REALTIME, CRITICAL, HIGH, NORMAL, LOW. |
+| D-002 | `ThreadPoolExecutor.shutdown` is called without `timeout` on the orchestrator and on `PluginManager.stop`. |
+| D-003 | `security.safe_extract_zip` rejects absolute paths, `..`, drive prefixes, and symlinks, and validates every member before any write. Marketplace and archive install both use it. |
+| D-004 | Verification requires RSA-PSS. A missing signature fails closed unless unsigned plugins are explicitly allowed. `sha256` is rejected as a signature. |
+| D-005 | `TrustSystem.verify_developer_signature` runs on the install path after download. |
+| D-006 | `create_marketplace` registers no placeholder key. Placeholder PEM text is refused. Keys come from `SOMNUS_MARKETPLACE_TRUST_KEYS` when that directory exists. |
+| D-007 | Key-parse, hex, `InvalidSignature`, and other failures log as distinct cases. |
+| D-008 | The download loop counts bytes and deletes the file when the cap is crossed, including when `Content-Length` is absent. |
+| D-009 | Reactive workflows drain `context['events']` and `dispatch_event` invokes registered handlers. |
+| D-010 | Independent graph steps run with `asyncio.gather`. A cycle fails the execution and records the cycle. |
+| D-011 | Each call records machine-share CPU and resident growth. The manifest ceiling is enforced before the next call. |
+| D-012 | Finished calls update canonical `PluginMetrics`, creating the object when a plugin does not have one. |
+| D-013 | The completion callback is bound before enqueue. |
+| D-014 | A `ValueError` during removal is logged and the pending entry is cleared. |
+| D-015 | `community_registry_url` is the URL selected for the community provider when one is configured. |
+| D-016 | Default registry URLs are empty. `network_enabled` defaults false. The `morpheus.ai` hosts are gone. |
+| D-017 | Trust is computed locally after signature verification. The server's `trust_score` is stored as `server_asserted_trust` and is not the gate. |
+| D-018 | `PluginMarketplace` owns `registry_cache` and passes that same object to clients. Stats read it. |
+| D-019 | `get_plugin_marketplace_info` returns a local inventory. `install_plugin_from_archive` extracts safely, validates, and loads. Neither call opens the network. |
+| D-020 | `PluginBase` implements consciousness sync, coherence, recursion depth, `network_request`, `websocket_connect`, and in-process `p2p_communicate`. Network methods require `NETWORK_ACCESS`. |
+| D-021 | Checkpoints are stored as `MemoryType.USER` / `MemoryScope.USER`. The old contradictory comments are gone. |
+| D-022 | One definition each of `PluginManifest`, `PluginBase`, `PluginDiscovery`, and `PluginFileWatcher`. The loader constructs the canonical manifest and accepts `plugin_base.PluginBase`. |
 
 ---
 

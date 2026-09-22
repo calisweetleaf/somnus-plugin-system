@@ -40,7 +40,24 @@ lowers exposure. It does not make a checksum into a signature.
 
 ---
 
-## 3. Active security findings
+## 3. Security findings
+
+**Resolution, 2026-09-22.** SEC-01 through SEC-10 are closed in source. The descriptions below are the original findings and are kept so a regression is recognizable. The marketplace network path remains disabled by default. Closing the defects did not turn the network on.
+
+| Finding | Status |
+|---|---|
+| SEC-01 | CLOSED. `security.py` imports. `PluginPermission` is defined on `plugin_base`. |
+| SEC-02 | CLOSED. Download verification requires RSA-PSS. A missing signature fails closed. A sha256 checksum is not accepted as a signature. |
+| SEC-03 | CLOSED. `verify_developer_signature` is on the install path. |
+| SEC-04 | CLOSED. No placeholder PEM is registered. `SOMNUS_MARKETPLACE_TRUST_KEYS` is the key source. |
+| SEC-05 | CLOSED. Extraction goes through `safe_extract_zip` before the security scan. |
+| SEC-06 | CLOSED. The stream counts bytes and unlinks the file past the cap. |
+| SEC-07 | CLOSED. The gate uses a local score computed after verification. Server-asserted trust is stored and ignored by the gate. |
+| SEC-08 | CLOSED as a default-host hijack. Registry URLs default empty. `network_enabled` defaults false. |
+| SEC-09 | CLOSED. Manifest memory and CPU ceilings are measured and enforced before the next call. |
+| SEC-10 | CLOSED. A bad signature fails validation. `trusted: true` does not skip verification. |
+
+## 3a. Original findings
 
 ### SEC-01 — `security.py` cannot be imported — **CRITICAL, blocks all enforcement**
 
@@ -147,25 +164,25 @@ A resource-exhaustion plugin is currently unconstrained by these fields.
 
 ## 4. Operational rules
 
-- **Never enable the marketplace network path** until SEC-02 through SEC-08 are resolved.
-  `install_from_archive` with a locally verified archive is the only defensible install route
-  today, and only after SEC-05 is fixed.
+- **Leave the marketplace network path disabled** unless an operator sets `network_enabled`
+  and supplies registry URLs. SEC-02 through SEC-08 are closed in source. That closure is not
+  permission to point the client at an unregistered host. Local archive install and the local
+  registry transport are the paths that run with the defaults.
 - **Never treat `trusted: true` in a manifest as meaningful.** It is a self-assertion by the
   plugin author with no verification behind it.
 - **Never log credentials, tokens, or keys.** Per global operator doctrine.
 - **Never commit a real private key or a real trust root to this repository.** The placeholder
   at `marketplace.py:839-842` must be replaced by host-supplied configuration, not by a
   committed key.
-- **Assume plugin code is hostile** until `security.py` is importable and its analysis actually
-  runs. Today it does not run.
+- **Assume plugin code is hostile.** `security.py` imports and its analysis runs during load.
+  A pattern match or a failed signature rejects the plugin.
 
 ---
 
 ## 5. Resolution ownership
 
-| Finding | Lands in |
+| Finding | Landed |
 |---|---|
-| SEC-01 | `packets/PACKET-002-lineage-convergence.md` |
-| SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08 | Not yet packetized. A marketplace hardening packet must be written before any network path is enabled. |
-| SEC-09 | Not yet packetized. Depends on `orchestration.py` resource instrumentation. |
-| SEC-10 | `packets/PACKET-002-lineage-convergence.md` (deletion) |
+| SEC-01, SEC-10 | Lineage convergence. `PluginPermission` lives on `plugin_base`. Signature verification fails closed. |
+| SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08 | Marketplace hardening, 2026-09-22. Network remains off by default. |
+| SEC-09 | Orchestration admission, 2026-09-22. Manifest ceilings are enforced. |

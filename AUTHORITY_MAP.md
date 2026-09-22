@@ -216,15 +216,14 @@ Recorded, not resolved. Each names the surface that wins and the packet that lan
 `class PluginPermission` exists only at `plugin_manager.py:75`. `security.py` consumes the symbol
 at lines 220, 223, 226, 229, 419, 433, and 703-705.
 *Winner:* `plugin_base.py` — the symbol belongs in the canonical lineage.
-*Status:* grep-verified absent. The `ImportError` itself is **PREDICTED, NOT YET OBSERVED** —
-the prerequisite (dependency install) has not run. Do not report it as observed.
-*Lands in:* PACKET-002, gated behind PACKET-001.
+*Status:* **RESOLVED 2026-09-22.** `class PluginPermission` is defined in `plugin_base.py`.
+`security.py` imports it from there. The historical absence above is the original evidence.
 
 **CONTRADICTION-02 — `PluginState` names two unrelated concepts.**
 `plugin_base.py:40` is a `str` Enum of 8 lifecycle states. `hot_reload.py:56` is a dataclass
 holding a runtime snapshot.
 *Winner:* `plugin_base.py` keeps the name. `hot_reload.py`'s type is renamed.
-*Lands in:* PACKET-002.
+*Status:* **RESOLVED 2026-09-22.** The hot-reload snapshot is `PluginRuntimeSnapshot`.
 
 **CONTRADICTION-03 — five further duplicate type names.**
 `PluginManifest` (`plugin_base.py:79` vs `plugin_manager.py:88`), `PluginBase`
@@ -234,12 +233,16 @@ holding a runtime snapshot.
 `marketplace.py:40`).
 *Winner:* the canonical lineage in every case, except `ResourceMonitor` where the two are
 genuinely different scopes (per-plugin vs workflow-level) and both survive under distinct names.
-*Lands in:* PACKET-002.
+*Status:* **RESOLVED 2026-09-22.** Rival copies in `plugin_manager.py` are deleted.
+`orchestration.ExecutionResourceMonitor` is the admission monitor.
+`marketplace.ListingStatus` is the listing enum. `plugin_base.ResourceMonitor` remains the
+per-plugin lifecycle monitor.
 
 **CONTRADICTION-04 — `installed/example_plugin/` is described as complete and is empty.**
 `TODO.md:68` asserted "Complete example with all interfaces." All 14 files are 0 bytes.
 *Winner:* the filesystem.
-*Resolved:* `TODO.md` deleted this session. A real reference implementation lands in PACKET-004.
+*Resolved:* `TODO.md` was deleted on 2026-09-05. **PACKET-004 landed 2026-09-22.**
+`installed/example_plugin/` is the loadable reference plugin `somnus_reference`.
 
 **CONTRADICTION-05 — `AGENTS.md` pointed at surfaces that did not exist.**
 The pre-repair `AGENTS.md` referenced `workflows.md`, `OPSEC.md`, `STATE.md`, `PLAN.md`,
@@ -267,11 +270,11 @@ Honest statement of what actually fails versus what is merely written down.
 
 | Mechanism | Status |
 |---|---|
-| Test suite | **Does not exist for this repository.** No `tests/` directory, no pytest configuration, no CI. Note: `test/plugin/smoke.py` exists on disk but was created by a subagent outside the approved plan and is not this repository's harness — see §6. |
+| Experiment proofs | `experiments/prove_defect_closure.py` and `experiments/prove_reference_plugin.py`. Each prints a terminal readout and writes JSON and Markdown. There is no pytest suite. |
 | CI | **Does not exist.** |
-| `gate.sh` | Installed this session. Reports `NOT RUN` for every dependency-gated check until PACKET-001 lands. |
-| Packet field contract | Mechanical — `node ~/.claude/skills/somnus-accelerate/scripts/validate-packet.mjs` |
-| pydantic manifest validation | Mechanical, but unreachable until dependencies are installed. |
+| `gate.sh` | Runnable checks pass. Packet validation is `NOT RUN` when `validate-packet.mjs` is absent. The pytest check is `NOT RUN` by design. |
+| Packet field contract | Mechanical — `node ~/.claude/skills/somnus-accelerate/scripts/validate-packet.mjs` when that file exists. |
+| pydantic manifest validation | Live. `PluginManifest.from_file` raises on a malformed manifest. |
 | Everything in this file | Conventional. |
 
 Per operator doctrine, validation in this repository is **experimentation**, not a pytest suite.

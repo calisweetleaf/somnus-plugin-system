@@ -1,6 +1,6 @@
-<<<<<<< Updated upstream
 # Environments
 /.venv/
+.venv/
 venv/
 
 # Editable-install build metadata
@@ -14,12 +14,9 @@ dist/
 /.vscode/
 /.remember/
 /.python_doctor/
-=======
-.venv/
->>>>>>> Stashed changes
+
 __pycache__/
 *.py[cod]
-*.egg-info/
 .pytest_cache/
 .mypy_cache/
 *.log

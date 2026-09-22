@@ -1,0 +1,236 @@
+{
+  "generated_at": "2026-09-22T08:01:45.821387+00:00",
+  "passed": 38,
+  "failed": 0,
+  "total": 38,
+  "checks": [
+    {
+      "defect": "D-021",
+      "name": "checkpoint memory classification is explicit",
+      "passed": true,
+      "detail": "MemoryType.USER is the checkpoint classification"
+    },
+    {
+      "defect": "D-022",
+      "name": "each collided class has one definition",
+      "passed": true,
+      "detail": "{'PluginManifest': 1, 'PluginBase': 1, 'PluginDiscovery': 1, 'PluginFileWatcher': 1}"
+    },
+    {
+      "defect": "D-022",
+      "name": "plugin_manager.PluginBase is plugin_base.PluginBase",
+      "passed": true,
+      "detail": "plugin_base.PluginBase"
+    },
+    {
+      "defect": "D-022",
+      "name": "manager re-exports the canonical base",
+      "passed": true,
+      "detail": "identity held"
+    },
+    {
+      "defect": "D-001",
+      "name": "priority drain",
+      "passed": true,
+      "detail": "dequeued ['rt', 'normal', 'low']"
+    },
+    {
+      "defect": "D-014",
+      "name": "remove inconsistency is visible and successful",
+      "passed": true,
+      "detail": "remove returned True"
+    },
+    {
+      "defect": "D-005",
+      "name": "CryptographicValidator verifies RSA-PSS",
+      "passed": true,
+      "detail": "verified=True"
+    },
+    {
+      "defect": "D-002",
+      "name": "ThreadPoolExecutor shutdown accepts no timeout",
+      "passed": true,
+      "detail": "ok=True"
+    },
+    {
+      "defect": "D-003",
+      "name": "zip-slip member is refused before write",
+      "passed": true,
+      "detail": "raised=True escaped=[]"
+    },
+    {
+      "defect": "D-019",
+      "name": "archive install loads a canonical plugin",
+      "passed": true,
+      "detail": "installed=True type=Plugin"
+    },
+    {
+      "defect": "D-022",
+      "name": "loader kept canonical manifest fields",
+      "passed": true,
+      "detail": "fields=dict_keys(['name', 'version', 'description', 'author', 'plugin_type', 'capabilities', 'consciousness_level_required', 'recursive_depth_limit', 'quantum_coherence_required', 'morpheus_version_min', 'morpheus_version_max', 'python_version_min', 'dependencies', 'plugin_dependencies', 'permissions', 'trusted', 'signature', 'security_level', 'api_endpoints', 'ui_components', 'agent_actions', 'workflow_nodes', 'memory_extensions', 'memory_limit_mb', 'cpu_limit_percent', 'network_access_required', 'file_system_access', 'tags', 'license', 'homepage', 'repository', 'documentation'])"
+    },
+    {
+      "defect": "D-019",
+      "name": "marketplace info is a real inventory",
+      "passed": true,
+      "detail": "active=1 keys=['active_count', 'discovered', 'installed', 'network_enabled', 'publisher_keys']"
+    },
+    {
+      "defect": "SEC-10",
+      "name": "bad signature does not pass",
+      "passed": true,
+      "detail": "valid=False issues=['Invalid cryptographic signature']"
+    },
+    {
+      "defect": "D-011",
+      "name": "memory measurement is non-zero",
+      "passed": true,
+      "detail": "success=True memory_used=4MB cpu=25.22"
+    },
+    {
+      "defect": "D-011",
+      "name": "cpu measurement is non-zero",
+      "passed": true,
+      "detail": "success=True cpu=25.0 memory_used=1"
+    },
+    {
+      "defect": "D-011",
+      "name": "manifest budget blocks the next call",
+      "passed": true,
+      "detail": "precheck_ok=False violations=['Memory usage 4MB exceeds manifest limit 1MB', 'CPU usage 25.0% exceeds manifest limit 1.0%'] manifest_id=139842971487680 live_same=True limits=1/1.0 live_limits=1/1.0 usage={'loaderproof': 4}/{'loaderproof': 25.0} success=False error=Resource limits exceeded: ['Memory usage 4MB exceeds manifest limit 1MB', 'CPU usage 25.0% exceeds manifest limit 1.0%']"
+    },
+    {
+      "defect": "D-012",
+      "name": "canonical metrics recorded",
+      "passed": true,
+      "detail": "execution_count=2"
+    },
+    {
+      "defect": "D-013",
+      "name": "forty concurrent requests all complete",
+      "passed": true,
+      "detail": "40/40 completed"
+    },
+    {
+      "defect": "D-009",
+      "name": "seeded reactive event ran its handler",
+      "passed": true,
+      "detail": "state=WorkflowState.COMPLETED later={'plugin': 'loaderproof', 'event': {'name': 'alarm', 'payload': {'kind': 'seed'}}}"
+    },
+    {
+      "defect": "D-009",
+      "name": "dispatch_event invokes the registered handler",
+      "passed": true,
+      "detail": "fired=1"
+    },
+    {
+      "defect": "D-010",
+      "name": "independent graph steps overlap",
+      "passed": true,
+      "detail": "elapsed=0.469s overlap=True"
+    },
+    {
+      "defect": "D-010",
+      "name": "cyclic graph fails with a cycle diagnostic",
+      "passed": true,
+      "detail": "state=WorkflowState.FAILED errors=[\"Cyclic dependency: [['b', 'a', 'b']]\"]"
+    },
+    {
+      "defect": "D-002",
+      "name": "orchestrator stop",
+      "passed": true,
+      "detail": "PluginOrchestrator.stop completed"
+    },
+    {
+      "defect": "D-006",
+      "name": "create_marketplace registers no placeholder key",
+      "passed": true,
+      "detail": "keys=['proof-author']"
+    },
+    {
+      "defect": "D-006",
+      "name": "placeholder PEM is refused",
+      "passed": true,
+      "detail": "refused=True"
+    },
+    {
+      "defect": "D-018",
+      "name": "registry cache survives the client",
+      "passed": true,
+      "detail": "cached=1"
+    },
+    {
+      "defect": "D-016",
+      "name": "default network path is off and hostless",
+      "passed": true,
+      "detail": "network=False"
+    },
+    {
+      "defect": "D-015",
+      "name": "community provider selects community_registry_url",
+      "passed": true,
+      "detail": "https://registry.example.invalid/community"
+    },
+    {
+      "defect": "D-004",
+      "name": "RSA-PSS install verifies and loads",
+      "passed": true,
+      "detail": "success=True message=Installation completed successfully"
+    },
+    {
+      "defect": "D-005",
+      "name": "verify_developer_signature accepted the artifact",
+      "passed": true,
+      "detail": "Installation completed successfully"
+    },
+    {
+      "defect": "D-017",
+      "name": "install did not trust a server-asserted score",
+      "passed": true,
+      "detail": "local signature score cleared the floor; server trust was not an input"
+    },
+    {
+      "defect": "D-004",
+      "name": "missing signature fails closed",
+      "passed": true,
+      "detail": "verify_download=False"
+    },
+    {
+      "defect": "D-004",
+      "name": "sha256 checksum is not a signature",
+      "passed": true,
+      "detail": "verify_download=False"
+    },
+    {
+      "defect": "D-007",
+      "name": "malformed hex and cryptographic mismatch are distinct",
+      "passed": true,
+      "detail": "Signature for proof-author is not hexadecimal | RSA-PSS signature mismatch for developer proof-author"
+    },
+    {
+      "defect": "D-008",
+      "name": "streaming download stops past the byte cap",
+      "passed": true,
+      "detail": "downloaded=False exists=False"
+    },
+    {
+      "defect": "D-020",
+      "name": "consciousness interface is operational",
+      "passed": true,
+      "detail": "coherence=0.96 depth=0"
+    },
+    {
+      "defect": "D-020",
+      "name": "in-process peer delivery",
+      "passed": true,
+      "detail": "delivered=True inbox=1"
+    },
+    {
+      "defect": "D-020",
+      "name": "network permission is enforced",
+      "passed": true,
+      "detail": "denied=True"
+    }
+  ]
+}

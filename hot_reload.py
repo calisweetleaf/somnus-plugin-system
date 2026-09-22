@@ -53,7 +53,7 @@ class StatePreservationLevel(str, Enum):
 
 
 @dataclass
-class PluginState:
+class PluginRuntimeSnapshot:
     """Comprehensive plugin state container for preservation across reloads"""
     plugin_id: str
     version: str
@@ -88,7 +88,7 @@ class PluginState:
             return json.dumps(data, default=str).encode('utf-8')
     
     @classmethod
-    def deserialize(cls, data: bytes) -> 'PluginState':
+    def deserialize(cls, data: bytes) -> 'PluginRuntimeSnapshot':
         """Deserialize state from persistence.
 
         JSON-only deserialization. pickle.loads is deliberately excluded
@@ -253,7 +253,7 @@ class StateManager:
     
     def __init__(self, memory_manager: MemoryManager):
         self.memory_manager = memory_manager
-        self.plugin_states: Dict[str, PluginState] = {}
+        self.plugin_states: Dict[str, PluginRuntimeSnapshot] = {}
         self.state_lock = threading.RLock()
         self.preservation_callbacks: Dict[str, List[Callable]] = defaultdict(list)
         
@@ -262,14 +262,14 @@ class StateManager:
         plugin_id: str, 
         plugin_instance: Any,
         preservation_level: StatePreservationLevel = StatePreservationLevel.FULL
-    ) -> PluginState:
+    ) -> PluginRuntimeSnapshot:
         """
         Capture comprehensive plugin state for preservation during reload.
         
         Implements deep state introspection with memory coherence preservation.
         """
         try:
-            state = PluginState(
+            state = PluginRuntimeSnapshot(
                 plugin_id=plugin_id,
                 version=getattr(plugin_instance, 'version', '1.0.0')
             )
@@ -320,7 +320,7 @@ class StateManager:
         except Exception as e:
             logger.error(f"Failed to capture state for plugin {plugin_id}: {e}")
             # Return minimal state
-            return PluginState(plugin_id=plugin_id, version='unknown')
+            return PluginRuntimeSnapshot(plugin_id=plugin_id, version='unknown')
     
     def _auto_capture_state(self, plugin_instance: Any) -> Dict[str, Any]:
         """Automatically capture serializable plugin attributes"""
@@ -368,7 +368,7 @@ class StateManager:
         # For now, return empty dict
         return {}
     
-    async def _persist_state(self, state: PluginState):
+    async def _persist_state(self, state: PluginRuntimeSnapshot):
         """Persist plugin state in memory system"""
         try:
             await self.memory_manager.store_memory(
@@ -391,7 +391,7 @@ class StateManager:
         self, 
         plugin_id: str, 
         plugin_instance: Any,
-        state: Optional[PluginState] = None
+        state: Optional[PluginRuntimeSnapshot] = None
     ) -> bool:
         """
         Restore plugin state after reload.

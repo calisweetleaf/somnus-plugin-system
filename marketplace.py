@@ -7,6 +7,8 @@ import asyncio
 import aiohttp
 import hashlib
 import json
+import os
+import shutil
 import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -37,7 +39,7 @@ class MarketplaceProvider(str, Enum):
     PRIVATE = "private"
 
 
-class PluginStatus(str, Enum):
+class ListingStatus(str, Enum):
     DRAFT = "draft"
     PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
@@ -53,10 +55,28 @@ class DistributionChannel(str, Enum):
     PRIVATE = "private"
 
 
+class MarketplaceNetworkDisabled(RuntimeError):
+    """Raised when a registry call requires the network and the network is off."""
+
+
 @dataclass
 class MarketplaceConfig:
-    official_registry_url: str = "https://marketplace.morpheus.ai"
-    community_registry_url: str = "https://community.morpheus.ai"
+    """Distribution settings.
+
+    Registry URLs default to empty. The previous defaults were hostnames this
+    repository does not control. Leaving them populated would make a client
+    trust whatever registered those names. Set `network_enabled` and an
+    explicit URL together when an operator owns the registry.
+
+    `local_registry_root` is the transport that works with the network off:
+    a directory of plugin trees the embedding system already has on disk.
+    """
+    official_registry_url: str = ""
+    community_registry_url: str = ""
+    enterprise_registry_url: str = ""
+    private_registry_url: str = ""
+    local_registry_root: Optional[str] = None
+    network_enabled: bool = False
     cache_duration_hours: int = 24
     max_download_size_mb: int = 100
     verify_signatures: bool = True
@@ -90,7 +110,7 @@ class PluginListing:
     plugin_id: str
     manifest: PluginManifest
     provider: MarketplaceProvider
-    status: PluginStatus
+    status: ListingStatus
     channel: DistributionChannel
     
     download_url: str
@@ -111,6 +131,8 @@ class PluginListing:
     conflicts: List[str] = field(default_factory=list)
     
     trust_score: float = 0.0
+    server_asserted_trust: float = 0.0
+    signature_verified: bool = False
     security_scan_results: Optional[SecurityReport] = None
 
 
@@ -131,44 +153,65 @@ class TrustSystem:
         self.verification_keys: Dict[str, bytes] = {}
         
     def calculate_trust_score(self, listing: PluginListing) -> float:
-        base_score = 0.0
-        
-        developer_score = self.developer_scores.get(listing.manifest.author, 0.5)
-        base_score += developer_score * 0.3
-        
-        if listing.provider == MarketplaceProvider.OFFICIAL:
-            base_score += 0.4
-        elif listing.provider == MarketplaceProvider.ENTERPRISE:
-            base_score += 0.3
-        elif listing.provider == MarketplaceProvider.COMMUNITY:
-            base_score += 0.1
-        
-        if listing.statistics.rating_count > 0:
-            rating_factor = min(listing.statistics.rating_average / 5.0, 1.0)
-            review_factor = min(listing.statistics.rating_count / 100.0, 1.0)
-            base_score += rating_factor * review_factor * 0.2
-        
-        if listing.statistics.download_count > 1000:
-            base_score += 0.1
-        
-        if listing.security_scan_results:
-            security_factor = 1.0 - listing.security_scan_results.risk_score
+        """Score a listing from local evidence.
+
+        A registry's self-reported `trust_score` is not an input. Provider
+        bonuses apply only after a developer signature has verified. An
+        unknown developer contributes nothing, so an unsigned listing stays
+        under the default install threshold.
+        """
+        developer_score = self.developer_scores.get(listing.manifest.author, 0.0)
+        base_score = developer_score * 0.3
+
+        if listing.signature_verified:
+            base_score += 0.45
+            if listing.provider == MarketplaceProvider.OFFICIAL:
+                base_score += 0.2
+            elif listing.provider == MarketplaceProvider.ENTERPRISE:
+                base_score += 0.15
+            elif listing.provider == MarketplaceProvider.COMMUNITY:
+                base_score += 0.05
+
+            if listing.statistics.rating_count > 0:
+                rating_factor = min(listing.statistics.rating_average / 5.0, 1.0)
+                review_factor = min(listing.statistics.rating_count / 100.0, 1.0)
+                base_score += rating_factor * review_factor * 0.2
+
+            if listing.statistics.download_count > 1000:
+                base_score += 0.1
+
+        if listing.security_scan_results and listing.security_scan_results.risk_score > 0:
+            security_factor = max(0.0, 1.0 - listing.security_scan_results.risk_score)
             base_score *= security_factor
-        
+
         age_days = (datetime.now(timezone.utc) - listing.published_at).days
         if age_days > 365:
             base_score *= 0.9
-        
+
         return min(base_score, 1.0)
-    
+
     def verify_developer_signature(self, data: bytes, signature: str, developer_id: str) -> bool:
         if developer_id not in self.verification_keys:
+            logger.error("No verification key registered for developer %s", developer_id)
             return False
-        
+
         try:
             public_key = serialization.load_pem_public_key(self.verification_keys[developer_id])
+        except Exception as exc:
+            logger.error(
+                "Verification key for %s is not a parseable PEM public key: %s",
+                developer_id,
+                type(exc).__name__,
+            )
+            return False
+
+        try:
             signature_bytes = bytes.fromhex(signature)
-            
+        except ValueError:
+            logger.error("Signature for %s is not hexadecimal", developer_id)
+            return False
+
+        try:
             public_key.verify(
                 signature_bytes,
                 data,
@@ -179,20 +222,71 @@ class TrustSystem:
                 hashes.SHA256()
             )
             return True
-        except (InvalidSignature, Exception):
+        except InvalidSignature:
+            logger.warning("RSA-PSS signature mismatch for developer %s", developer_id)
             return False
-    
-    def register_developer_key(self, developer_id: str, public_key: bytes):
+        except Exception as exc:
+            logger.error(
+                "Signature verification error for %s: %s",
+                developer_id,
+                type(exc).__name__,
+            )
+            return False
+
+    def register_developer_key(self, developer_id: str, public_key: bytes) -> None:
+        if b"..." in public_key or b"official marketplace public key" in public_key.lower():
+            raise ValueError(
+                f"Refusing placeholder key material for developer {developer_id}"
+            )
+        try:
+            serialization.load_pem_public_key(public_key)
+        except Exception as exc:
+            raise ValueError(
+                f"Developer key for {developer_id} is not a PEM public key: {type(exc).__name__}"
+            ) from exc
         self.verification_keys[developer_id] = public_key
         if developer_id not in self.developer_scores:
-            self.developer_scores[developer_id] = 0.5
+            self.developer_scores[developer_id] = 0.8
 
 
 class RegistryClient:
-    def __init__(self, config: MarketplaceConfig):
+    def __init__(
+        self,
+        config: MarketplaceConfig,
+        cache: Optional[Dict[str, Tuple[datetime, Any]]] = None,
+        trust_system: Optional[TrustSystem] = None,
+    ):
         self.config = config
         self.session: Optional[aiohttp.ClientSession] = None
-        self.cache: Dict[str, Tuple[datetime, Any]] = {}
+        # The cache is owned by PluginMarketplace and shared across clients so
+        # cache_duration_hours can outlive a single `async with` block.
+        self.cache: Dict[str, Tuple[datetime, Any]] = cache if cache is not None else {}
+        self.trust_system = trust_system
+
+    def registry_base(self, provider: Optional[MarketplaceProvider]) -> str:
+        selected = provider or MarketplaceProvider.OFFICIAL
+        urls = {
+            MarketplaceProvider.OFFICIAL: self.config.official_registry_url,
+            MarketplaceProvider.COMMUNITY: self.config.community_registry_url,
+            MarketplaceProvider.ENTERPRISE: self.config.enterprise_registry_url,
+            MarketplaceProvider.PRIVATE: self.config.private_registry_url,
+        }
+        return (urls.get(selected) or "").rstrip("/")
+
+    def _require_network(self, provider: Optional[MarketplaceProvider]) -> str:
+        if not self.config.network_enabled:
+            raise MarketplaceNetworkDisabled(
+                "Marketplace network path is disabled. Set network_enabled and an "
+                "explicit registry URL. Default hostnames were removed because this "
+                "repository does not control them."
+            )
+        base = self.registry_base(provider)
+        if not base:
+            name = (provider or MarketplaceProvider.OFFICIAL).value
+            raise MarketplaceNetworkDisabled(
+                f"No registry URL configured for provider {name}"
+            )
+        return base
         
     async def __aenter__(self):
         ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -235,7 +329,20 @@ class RegistryClient:
         if provider:
             params['provider'] = provider.value
         
-        url = f"{self.config.official_registry_url}/api/v1/plugins/search"
+        if not self.config.network_enabled:
+            listings = self._search_local(query, category, provider, channel)
+            start = max(0, (page - 1) * limit)
+            page_items = listings[start:start + limit]
+            self._cache_result(cache_key, page_items)
+            return page_items
+
+        try:
+            base = self._require_network(provider)
+        except MarketplaceNetworkDisabled as exc:
+            logger.error("%s", exc)
+            return []
+
+        url = f"{base}/api/v1/plugins/search"
         
         async with self.session.get(url, params=params) as response:
             if response.status == 200:
@@ -253,7 +360,19 @@ class RegistryClient:
         if cached_result:
             return cached_result
         
-        url = f"{self.config.official_registry_url}/api/v1/plugins/{plugin_id}"
+        if not self.config.network_enabled:
+            listing = self._local_listing(plugin_id, version)
+            if listing is not None:
+                self._cache_result(cache_key, listing)
+            return listing
+
+        try:
+            base = self._require_network(None)
+        except MarketplaceNetworkDisabled as exc:
+            logger.error("%s", exc)
+            return None
+
+        url = f"{base}/api/v1/plugins/{plugin_id}"
         params = {}
         if version:
             params['version'] = version
@@ -268,7 +387,19 @@ class RegistryClient:
                 return None
     
     async def get_plugin_versions(self, plugin_id: str) -> List[str]:
-        url = f"{self.config.official_registry_url}/api/v1/plugins/{plugin_id}/versions"
+        if not self.config.network_enabled:
+            listing = self._local_listing(plugin_id, None)
+            if listing is None:
+                return []
+            return [listing.manifest.version]
+
+        try:
+            base = self._require_network(None)
+        except MarketplaceNetworkDisabled as exc:
+            logger.error("%s", exc)
+            return []
+
+        url = f"{base}/api/v1/plugins/{plugin_id}/versions"
         
         async with self.session.get(url) as response:
             if response.status == 200:
@@ -279,7 +410,34 @@ class RegistryClient:
     
     async def download_plugin(self, listing: PluginListing, target_path: Path, 
                             progress_callback: Optional[callable] = None) -> bool:
-        
+        local_artifact = self._resolve_local_path(listing.download_url)
+        byte_cap = self.config.max_download_size_mb * 1024 * 1024
+
+        if local_artifact is not None:
+            size = local_artifact.stat().st_size
+            if size > byte_cap:
+                logger.error("Plugin too large: %s bytes", size)
+                return False
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(local_artifact, target_path)
+            if progress_callback:
+                progress_callback(DownloadProgress(
+                    plugin_id=listing.plugin_id,
+                    total_bytes=size,
+                    downloaded_bytes=size,
+                    speed_bps=0,
+                    eta_seconds=0,
+                    status="completed",
+                ))
+            return True
+
+        if not self.config.network_enabled:
+            logger.error("Refusing network download while marketplace network is disabled")
+            return False
+        if self.session is None:
+            logger.error("Registry session is not open")
+            return False
+
         async with self.session.get(listing.download_url) as response:
             if response.status != 200:
                 logger.error(f"Download failed: {response.status}")
@@ -287,17 +445,27 @@ class RegistryClient:
             
             total_size = int(response.headers.get('Content-Length', 0))
             
-            if total_size > self.config.max_download_size_mb * 1024 * 1024:
+            if total_size > byte_cap:
                 logger.error(f"Plugin too large: {total_size} bytes")
                 return False
             
             downloaded = 0
             start_time = datetime.now()
+            target_path.parent.mkdir(parents=True, exist_ok=True)
             
             with open(target_path, 'wb') as f:
                 async for chunk in response.content.iter_chunked(8192):
-                    f.write(chunk)
                     downloaded += len(chunk)
+                    if downloaded > byte_cap:
+                        logger.error(
+                            "Download exceeded cap after %s bytes (Content-Length was %s)",
+                            downloaded,
+                            total_size,
+                        )
+                        f.close()
+                        target_path.unlink(missing_ok=True)
+                        return False
+                    f.write(chunk)
                     
                     if progress_callback and total_size > 0:
                         elapsed = (datetime.now() - start_time).total_seconds()
@@ -317,7 +485,7 @@ class RegistryClient:
         if progress_callback:
             progress_callback(DownloadProgress(
                 plugin_id=listing.plugin_id,
-                total_bytes=total_size,
+                total_bytes=downloaded,
                 downloaded_bytes=downloaded,
                 speed_bps=0,
                 eta_seconds=0,
@@ -327,33 +495,199 @@ class RegistryClient:
         return True
     
     async def verify_download(self, listing: PluginListing, file_path: Path) -> bool:
-        if not listing.signature_url or not self.config.verify_signatures:
+        """Authenticate an artifact with RSA-PSS.
+
+        A same-origin SHA-256 comparison is not a signature. When signature
+        verification is required, absence of a signature document fails closed
+        unless `allow_unsigned_plugins` is set. A declared signature that
+        cannot be loaded also fails closed — it is not treated as unsigned.
+        """
+        file_data = file_path.read_bytes()
+        digest = hashlib.sha256(file_data).hexdigest()
+
+        if not self.config.verify_signatures:
+            listing.signature_verified = False
             return True
-        
+
+        if not listing.signature_url:
+            listing.signature_verified = False
+            return bool(self.config.allow_unsigned_plugins)
+
         try:
-            async with self.session.get(listing.signature_url) as response:
-                if response.status != 200:
-                    return False
-                
-                signature_data = await response.json()
-                signature = signature_data.get('signature')
-                algorithm = signature_data.get('algorithm', 'sha256')
-                
-                with open(file_path, 'rb') as f:
-                    file_data = f.read()
-                
-                if algorithm == 'sha256':
-                    file_hash = hashlib.sha256(file_data).hexdigest()
-                    return file_hash == signature
-                
-                return False
-        
-        except Exception as e:
-            logger.error(f"Signature verification failed: {e}")
+            signature_data = await self._load_signature_document(listing)
+        except Exception as exc:
+            logger.error("Signature document load failed: %s", type(exc).__name__)
+            listing.signature_verified = False
             return False
+
+        if signature_data is None:
+            listing.signature_verified = False
+            return False
+
+        claimed_hash = signature_data.get("content_sha256")
+        if claimed_hash and claimed_hash != digest:
+            logger.error("Artifact hash does not match the signature document")
+            listing.signature_verified = False
+            return False
+
+        algorithm = str(signature_data.get("algorithm", "")).lower().replace("-", "_")
+        if algorithm != "rsa_pss_sha256":
+            logger.error(
+                "Algorithm %s does not authenticate the artifact; sha256 checksums are integrity only",
+                algorithm or "<missing>",
+            )
+            listing.signature_verified = False
+            return False
+
+        if self.trust_system is None:
+            logger.error("RSA signature present but no trust system is bound")
+            listing.signature_verified = False
+            return False
+
+        signature = str(signature_data.get("signature", ""))
+        if ":" in signature:
+            signature = signature.split(":", 1)[1]
+        developer_id = str(signature_data.get("developer_id") or listing.manifest.author)
+        verified = self.trust_system.verify_developer_signature(file_data, signature, developer_id)
+        listing.signature_verified = verified
+        return verified
+
+    async def _load_signature_document(self, listing: PluginListing) -> Optional[Dict[str, Any]]:
+        local_signature = self._resolve_local_path(listing.signature_url or "")
+        if local_signature is not None:
+            with open(local_signature, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else None
+
+        if not self.config.network_enabled:
+            logger.error("Signature URL is remote and the marketplace network is disabled")
+            return None
+        if self.session is None or not listing.signature_url:
+            return None
+
+        async with self.session.get(listing.signature_url) as response:
+            if response.status != 200:
+                return None
+            data = await response.json()
+            return data if isinstance(data, dict) else None
+
+    def _resolve_local_path(self, url: str) -> Optional[Path]:
+        if not url:
+            return None
+        if url.startswith("file://"):
+            candidate = Path(url[7:])
+        elif "://" in url:
+            return None
+        else:
+            candidate = Path(url)
+        if candidate.is_file():
+            return candidate
+        return None
+
+    def _local_root(self) -> Optional[Path]:
+        if not self.config.local_registry_root:
+            return None
+        root = Path(self.config.local_registry_root)
+        if not root.is_dir():
+            return None
+        return root
+
+    def _iter_local_plugins(self) -> List[Path]:
+        root = self._local_root()
+        if root is None:
+            return []
+        found: List[Path] = []
+        for manifest_path in root.rglob("manifest.json"):
+            if any(part.startswith(".") for part in manifest_path.relative_to(root).parts):
+                continue
+            found.append(manifest_path.parent)
+        return found
+
+    def _search_local(
+        self,
+        query: str,
+        category: Optional[str],
+        provider: Optional[MarketplaceProvider],
+        channel: DistributionChannel,
+    ) -> List[PluginListing]:
+        matches: List[PluginListing] = []
+        needle = query.lower().strip()
+        for plugin_dir in self._iter_local_plugins():
+            listing = self._listing_from_directory(plugin_dir)
+            if listing is None:
+                continue
+            if provider and listing.provider != provider:
+                continue
+            if listing.channel != channel and channel != DistributionChannel.PUBLIC:
+                continue
+            if category and category not in listing.manifest.tags:
+                continue
+            haystack = " ".join([
+                listing.plugin_id,
+                listing.manifest.name,
+                listing.manifest.description,
+                listing.manifest.author,
+            ]).lower()
+            if needle and needle not in haystack:
+                continue
+            matches.append(listing)
+        return matches
+
+    def _local_listing(self, plugin_id: str, version: Optional[str]) -> Optional[PluginListing]:
+        for plugin_dir in self._iter_local_plugins():
+            listing = self._listing_from_directory(plugin_dir)
+            if listing is None:
+                continue
+            if listing.plugin_id != plugin_id and listing.manifest.name != plugin_id:
+                continue
+            if version and listing.manifest.version != version:
+                continue
+            return listing
+        return None
+
+    def _listing_from_directory(self, plugin_dir: Path) -> Optional[PluginListing]:
+        manifest_path = plugin_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return None
+        try:
+            manifest = PluginManifest.from_file(manifest_path)
+        except Exception as exc:
+            logger.error("Local manifest %s rejected: %s", manifest_path, exc)
+            return None
+
+        artifact = plugin_dir / "artifact.zip"
+        if not artifact.is_file():
+            for candidate in plugin_dir.glob("*.zip"):
+                artifact = candidate
+                break
+        signature = plugin_dir / "signature.json"
+        provider_name = plugin_dir.parent.name if plugin_dir.parent != self._local_root() else "private"
+        try:
+            provider = MarketplaceProvider(provider_name)
+        except ValueError:
+            provider = MarketplaceProvider.PRIVATE
+
+        return PluginListing(
+            plugin_id=manifest.name,
+            manifest=manifest,
+            provider=provider,
+            status=ListingStatus.APPROVED,
+            channel=DistributionChannel.PUBLIC,
+            download_url=str(artifact) if artifact.is_file() else "",
+            signature_url=str(signature) if signature.is_file() else None,
+            published_at=datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=timezone.utc),
+            updated_at=datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=timezone.utc),
+            trust_score=0.0,
+        )
     
     async def submit_rating(self, plugin_id: str, rating: PluginRating) -> bool:
-        url = f"{self.config.official_registry_url}/api/v1/plugins/{plugin_id}/ratings"
+        try:
+            base = self._require_network(None)
+        except MarketplaceNetworkDisabled as exc:
+            logger.error("%s", exc)
+            return False
+
+        url = f"{base}/api/v1/plugins/{plugin_id}/ratings"
         
         data = {
             'rating': rating.rating,
@@ -365,7 +699,13 @@ class RegistryClient:
             return response.status == 200
     
     async def report_plugin(self, plugin_id: str, reason: str, details: str) -> bool:
-        url = f"{self.config.official_registry_url}/api/v1/plugins/{plugin_id}/report"
+        try:
+            base = self._require_network(None)
+        except MarketplaceNetworkDisabled as exc:
+            logger.error("%s", exc)
+            return False
+
+        url = f"{base}/api/v1/plugins/{plugin_id}/report"
         
         data = {
             'reason': reason,
@@ -404,7 +744,7 @@ class RegistryClient:
             plugin_id=data.get('plugin_id', manifest.name),
             manifest=manifest,
             provider=MarketplaceProvider(data.get('provider', 'community')),
-            status=PluginStatus(data.get('status', 'approved')),
+            status=ListingStatus(data.get('status', 'approved')),
             channel=DistributionChannel(data.get('channel', 'public')),
             download_url=data.get('download_url', ''),
             signature_url=data.get('signature_url'),
@@ -418,7 +758,8 @@ class RegistryClient:
             support_url=data.get('support_url'),
             dependencies=data.get('dependencies', []),
             conflicts=data.get('conflicts', []),
-            trust_score=data.get('trust_score', 0.0)
+            trust_score=0.0,
+            server_asserted_trust=float(data.get('trust_score', 0.0) or 0.0),
         )
     
     def _get_cached(self, key: str) -> Any:
@@ -435,17 +776,29 @@ class RegistryClient:
 
 
 class PluginInstaller:
-    def __init__(self, plugin_manager, security_manager: SecurityManager, config: MarketplaceConfig):
+    def __init__(
+        self,
+        plugin_manager,
+        security_manager: SecurityManager,
+        config: MarketplaceConfig,
+        trust_system: Optional[TrustSystem] = None,
+        registry_cache: Optional[Dict[str, Tuple[datetime, Any]]] = None,
+    ):
         self.plugin_manager = plugin_manager
         self.security_manager = security_manager
         self.config = config
+        self.trust_system = trust_system or TrustSystem()
+        self.registry_cache = registry_cache if registry_cache is not None else {}
         self.temp_dir = Path(tempfile.gettempdir()) / "morpheus_plugin_installs"
         self.temp_dir.mkdir(exist_ok=True)
+
+    def _registry(self) -> RegistryClient:
+        return RegistryClient(self.config, cache=self.registry_cache, trust_system=self.trust_system)
         
     async def install_from_marketplace(self, plugin_id: str, version: Optional[str] = None,
                                      progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
         
-        async with RegistryClient(self.config) as client:
+        async with self._registry() as client:
             listing = await client.get_plugin_details(plugin_id, version)
             if not listing:
                 return False, f"Plugin {plugin_id} not found in marketplace"
@@ -454,29 +807,38 @@ class PluginInstaller:
     
     async def install_from_listing(self, listing: PluginListing, 
                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
-        
-        if listing.trust_score < self.config.trust_level_threshold / 5.0:
-            return False, f"Plugin trust score too low: {listing.trust_score}"
-        
         temp_file = self.temp_dir / f"{listing.plugin_id}_{listing.manifest.version}.zip"
-        
+        trust_floor = self.config.trust_level_threshold / 5.0
+
         try:
-            async with RegistryClient(self.config) as client:
+            async with self._registry() as client:
                 success = await client.download_plugin(listing, temp_file, progress_callback)
                 if not success:
                     return False, "Download failed"
-                
+
                 if not await client.verify_download(listing, temp_file):
                     return False, "Download verification failed"
-            
+
+            listing.trust_score = self.trust_system.calculate_trust_score(listing)
+            if listing.trust_score < trust_floor:
+                return False, (
+                    f"Plugin trust score too low: {listing.trust_score:.3f} "
+                    f"(floor {trust_floor:.3f}). Server-asserted score "
+                    f"{listing.server_asserted_trust:.3f} is not accepted."
+                )
+
             extract_dir = self.temp_dir / f"{listing.plugin_id}_extracted"
             if extract_dir.exists():
                 import shutil
                 shutil.rmtree(extract_dir)
             extract_dir.mkdir()
             
-            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
+            from security import safe_extract_zip
+            safe_extract_zip(
+                temp_file,
+                extract_dir,
+                max_uncompressed_bytes=self.config.max_download_size_mb * 1024 * 1024,
+            )
             
             plugin_dir = self._find_plugin_directory(extract_dir)
             if not plugin_dir:
@@ -502,7 +864,10 @@ class PluginInstaller:
             
             import shutil
             shutil.move(str(plugin_dir), str(target_dir))
-            
+            discovery = getattr(self.plugin_manager, "discovery", None)
+            if discovery is not None and hasattr(discovery, "scan_plugin_directory"):
+                await discovery.scan_plugin_directory(target_dir)
+
             success = await self.plugin_manager.load_plugin(listing.plugin_id)
             if success:
                 logger.info(f"Successfully installed plugin: {listing.plugin_id}")
@@ -534,8 +899,12 @@ class PluginInstaller:
         extract_dir.mkdir()
         
         try:
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
+            from security import safe_extract_zip
+            safe_extract_zip(
+                archive_path,
+                extract_dir,
+                max_uncompressed_bytes=self.config.max_download_size_mb * 1024 * 1024,
+            )
             
             plugin_dir = self._find_plugin_directory(extract_dir)
             if not plugin_dir:
@@ -564,7 +933,10 @@ class PluginInstaller:
             
             import shutil
             shutil.move(str(plugin_dir), str(target_dir))
-            
+            discovery = getattr(self.plugin_manager, "discovery", None)
+            if discovery is not None and hasattr(discovery, "scan_plugin_directory"):
+                await discovery.scan_plugin_directory(target_dir)
+
             success = await self.plugin_manager.load_plugin(manifest.name)
             if success:
                 logger.info(f"Successfully installed plugin from archive: {manifest.name}")
@@ -632,7 +1004,7 @@ class UpdateManager:
         self.last_update_check = now
         self.available_updates.clear()
         
-        async with RegistryClient(self.config) as client:
+        async with self.installer._registry() as client:
             update_tasks = []
             
             for plugin_id, plugin in self.plugin_manager.active_plugins.items():
@@ -720,14 +1092,27 @@ class PluginMarketplace:
         self.config = config or MarketplaceConfig()
         
         self.trust_system = TrustSystem()
-        self.installer = PluginInstaller(plugin_manager, security_manager, self.config)
+        self.registry_cache: Dict[str, Tuple[datetime, Any]] = {}
+        self.installer = PluginInstaller(
+            plugin_manager,
+            security_manager,
+            self.config,
+            trust_system=self.trust_system,
+            registry_cache=self.registry_cache,
+        )
         self.update_manager = UpdateManager(plugin_manager, self.installer, self.config)
-        
         self.download_progress: Dict[str, DownloadProgress] = {}
         self.installation_history: List[Dict[str, Any]] = []
-        
+
+    def _client(self) -> RegistryClient:
+        return RegistryClient(
+            self.config,
+            cache=self.registry_cache,
+            trust_system=self.trust_system,
+        )
+
     async def search_plugins(self, query: str = "", **filters) -> List[PluginListing]:
-        async with RegistryClient(self.config) as client:
+        async with self._client() as client:
             listings = await client.search_plugins(query, **filters)
             
             for listing in listings:
@@ -737,7 +1122,7 @@ class PluginMarketplace:
             return listings
     
     async def get_plugin_details(self, plugin_id: str, version: Optional[str] = None) -> Optional[PluginListing]:
-        async with RegistryClient(self.config) as client:
+        async with self._client() as client:
             listing = await client.get_plugin_details(plugin_id, version)
             if listing:
                 listing.trust_score = self.trust_system.calculate_trust_score(listing)
@@ -803,11 +1188,11 @@ class PluginMarketplace:
             version=self.plugin_manager.active_plugins[plugin_id].manifest.version
         )
         
-        async with RegistryClient(self.config) as client:
+        async with self._client() as client:
             return await client.submit_rating(plugin_id, rating_obj)
     
     async def report_plugin(self, plugin_id: str, reason: str, details: str) -> bool:
-        async with RegistryClient(self.config) as client:
+        async with self._client() as client:
             return await client.report_plugin(plugin_id, reason, details)
     
     def get_download_progress(self, plugin_id: str) -> Optional[DownloadProgress]:
@@ -821,26 +1206,41 @@ class PluginMarketplace:
             'config': {
                 'auto_update_enabled': self.config.auto_update_enabled,
                 'verify_signatures': self.config.verify_signatures,
-                'trust_level_threshold': self.config.trust_level_threshold
+                'trust_level_threshold': self.config.trust_level_threshold,
+                'network_enabled': self.config.network_enabled,
+                'official_registry_configured': bool(self.config.official_registry_url),
+                'community_registry_configured': bool(self.config.community_registry_url),
             },
             'stats': {
                 'active_downloads': len(self.download_progress),
                 'installation_history_count': len(self.installation_history),
                 'developer_trust_scores': len(self.trust_system.developer_scores),
-                'cached_entries': len(getattr(self, '_registry_cache', {}))
+                'cached_entries': len(self.registry_cache),
+                'registered_developer_keys': len(self.trust_system.verification_keys),
             }
         }
 
 
 async def create_marketplace(plugin_manager, security_manager: SecurityManager, 
                            config: Optional[MarketplaceConfig] = None) -> PluginMarketplace:
+    """Build a marketplace with no embedded trust root.
+
+    Keys are loaded only from `SOMNUS_MARKETPLACE_TRUST_KEYS`, a directory of
+    PEM public keys named `<developer_id>.pem`. Nothing in this repository is
+    a trust anchor. The network path stays off unless the supplied config
+    enables it.
+    """
     marketplace = PluginMarketplace(plugin_manager, security_manager, config)
-    
-    official_key = b"""-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2gD+6F8H9L4Q8l0mV5R1
-...official marketplace public key...
------END PUBLIC KEY-----"""
-    
-    marketplace.trust_system.register_developer_key("morpheus_official", official_key)
-    
+    keys_dir = os.environ.get("SOMNUS_MARKETPLACE_TRUST_KEYS")
+    if keys_dir:
+        root = Path(keys_dir)
+        if root.is_dir():
+            for pem_path in sorted(root.glob("*.pem")):
+                marketplace.trust_system.register_developer_key(
+                    pem_path.stem,
+                    pem_path.read_bytes(),
+                )
+                logger.info("Registered marketplace trust key for %s", pem_path.stem)
+        else:
+            logger.error("SOMNUS_MARKETPLACE_TRUST_KEYS is not a directory")
     return marketplace

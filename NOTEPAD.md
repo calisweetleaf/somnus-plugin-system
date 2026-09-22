@@ -297,3 +297,27 @@ Additional corrections from review, not from the cold agent:
 - **Hazards:** `plugin_manager.py`'s loader at `:701` still gates on its local `PluginBase`.
   Until that gate is re-based, plugins authored against the canonical `plugin_base.PluginBase`
   are rejected by the only working loader.
+
+### 2026-09-22 08:05 UTC — Stilgar (Cursor cloud) — defect closure
+
+- **Base:** `7a7be24`
+- **Did:**
+  - Closed D-001 through D-022 in source. Orchestration drains REALTIME first, measures machine-share CPU and resident growth, enforces manifest ceilings, runs reactive handlers, gathers independent graph steps, fails cycles, binds callbacks before enqueue, and logs queue-removal races.
+  - Marketplace stays off the network. RSA-PSS is required. Checksums are not signatures. Placeholder keys are refused. Server trust scores are stored and not gated on. Downloads enforce a byte cap. Extraction uses `safe_extract_zip` before the scan. The registry cache is owned by `PluginMarketplace`.
+  - Deleted the rival `plugin_manager` contract types. The loader constructs `plugin_base.PluginBase`. `PluginBase` implements the consciousness and network methods. Checkpoints use `MemoryType.USER`.
+  - `stop_monitoring` closes the file watcher and drains debounced rescans so a reload cannot replace a live instance after monitoring has stopped.
+  - Route binding is per endpoint, and the public signature hides `plugin_instance`.
+  - Landed `somnus_reference` at `installed/example_plugin/`. `memory/extensions/` is a directory.
+  - Resolved the committed `.gitignore` conflict markers.
+- **Validation:**
+  - `.venv/bin/python experiments/prove_defect_closure.py` — 38/38 PASS
+  - `.venv/bin/python experiments/prove_reference_plugin.py` — 8/8 PASS
+  - `bash gate.sh` at `928aec7` — PASS 17, FAIL 0, PENDING 0. NOT RUN: packet validation (`validate-packet.mjs` absent) and the pytest suite (none exists, by design).
+- **Proof facts:**
+  - D-011 admission refused `loaderproof.ping` at 4MB / 25% against a 1MB / 1% manifest, on the same live instance.
+  - D-010 parallel overlap about 0.47s; cyclic graph FAILED with a cycle diagnostic.
+  - D-008 download stopped past 1MiB with no Content-Length and the file was removed.
+  - Reference routes returned distinct contract, lifecycle, and checkpoint payloads. Checkpoint memory type was `user`.
+- **Surfaces synchronized:** `AGENTS.md`, `STATE.md`, `TASK.md`, `CONTEXT.md`, `MEMORY.md`, `NOTEPAD.md`, `SPEC.md`, `OPSEC.md`, `AUTHORITY_MAP.md`, `docs/DEFECT_INDEX.md`, `filetree.md`, packet statuses, `.gitignore`
+- **Next agent:** Do not reopen the defect register without a new source reading. If a marketplace network is required, take an operator-supplied registry URL and `SOMNUS_MARKETPLACE_TRUST_KEYS`. Do not restore `morpheus.ai` defaults.
+- **Hazards:** Host `MemoryManager` and `SecurityEnforcer` remain protocols. A deployment host must satisfy them. The experiment proofs use in-process hosts and are not a vendored stub of the import path.

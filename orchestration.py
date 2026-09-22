@@ -6,20 +6,31 @@ Advanced plugin coordination, execution pipelines, and resource optimization.
 import asyncio
 import json
 import math
+import os
 import random
 import time
+import tracemalloc
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Callable, Union, Tuple
 import logging
 import uuid
 import weakref
 
-from plugin_base import PluginBase, PluginState, PluginContext, PluginMetrics, PluginManifest
+from plugin_base import (
+    PluginBase,
+    PluginState,
+    PluginContext,
+    PluginMetrics,
+    PluginManifest,
+    current_resident_bytes,
+    machine_cpu_percent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +44,29 @@ class ExecutionMode(str, Enum):
 
 
 class ExecutionPriority(str, Enum):
-    """Execution priority levels, ordered from highest to lowest.
+    """Execution priority levels.
 
-    The iteration order matches dequeue priority — REALTIME dequeues first.
-    This fixes D-001 from the defect index where the original ordering was
-    inverted (LOW dequeued before REALTIME).
+    Dequeue order is `_PRIORITY_DRAIN_ORDER`, not enum definition order.
+    Definition order and drain order both place REALTIME first so a reader
+    of the enum and the queue agree. D-001 was an inversion caused by
+    iterating the enum while the dict was written in the opposite order.
     """
     REALTIME = "realtime"
     CRITICAL = "critical"
     HIGH = "high"
     NORMAL = "normal"
     LOW = "low"
+
+
+# Explicit drain order. Independent of Enum member definition order so a
+# future reordering of the enum cannot silently invert the queue again.
+_PRIORITY_DRAIN_ORDER: Tuple[ExecutionPriority, ...] = (
+    ExecutionPriority.REALTIME,
+    ExecutionPriority.CRITICAL,
+    ExecutionPriority.HIGH,
+    ExecutionPriority.NORMAL,
+    ExecutionPriority.LOW,
+)
 
 
 class WorkflowState(str, Enum):
@@ -80,6 +103,8 @@ class ExecutionResult:
     error: Optional[Exception] = None
     execution_time: float = 0.0
     memory_used: int = 0
+    cpu_percent: float = 0.0
+    limit_violations: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -110,7 +135,15 @@ class WorkflowExecution:
     context: Dict[str, Any] = field(default_factory=dict)
 
 
-class ResourceMonitor:
+class ExecutionResourceMonitor:
+    """Per-plugin execution budget tracker.
+
+    Distinct from `plugin_base.ResourceMonitor`, which samples one plugin
+    process for the lifecycle engine. This monitor records measurements
+    taken around each orchestrated call and enforces the manifest budget
+    on the next admission decision.
+    """
+
     def __init__(self):
         self.memory_usage: Dict[str, int] = {}
         self.cpu_usage: Dict[str, float] = {}
@@ -140,6 +173,26 @@ class ResourceMonitor:
         if cpu_usage > self.resource_limits['cpu_percent_per_plugin']:
             violations.append(f"CPU usage {cpu_usage}% exceeds limit {self.resource_limits['cpu_percent_per_plugin']}%")
         
+        return len(violations) == 0, violations
+
+    def check_manifest_budget(
+        self,
+        plugin_id: str,
+        memory_limit_mb: int,
+        cpu_limit_percent: float,
+    ) -> Tuple[bool, List[str]]:
+        """Enforce the plugin manifest's own memory and CPU ceilings."""
+        violations: List[str] = []
+        memory_usage = self.memory_usage.get(plugin_id, 0)
+        if memory_usage > memory_limit_mb:
+            violations.append(
+                f"Memory usage {memory_usage}MB exceeds manifest limit {memory_limit_mb}MB"
+            )
+        cpu_usage = self.cpu_usage.get(plugin_id, 0.0)
+        if cpu_usage > cpu_limit_percent:
+            violations.append(
+                f"CPU usage {cpu_usage:.1f}% exceeds manifest limit {cpu_limit_percent}%"
+            )
         return len(violations) == 0, violations
     
     def get_performance_metrics(self, plugin_id: str) -> Dict[str, float]:
@@ -180,7 +233,7 @@ class ExecutionQueue:
     
     async def dequeue(self) -> Optional[ExecutionRequest]:
         async with self.lock:
-            for priority in ExecutionPriority:
+            for priority in _PRIORITY_DRAIN_ORDER:
                 queue = self.queues[priority]
                 if queue:
                     request = queue.popleft()
@@ -196,11 +249,78 @@ class ExecutionQueue:
                     self.queues[request.priority].remove(request)
                     return True
                 except ValueError:
-                    pass
+                    # The request was in the pending map and absent from its
+                    # deque. Both structures are guarded by this lock, so this
+                    # is an accounting inconsistency (double-remove, or a
+                    # priority mutation). The pending entry is already gone,
+                    # so the request is no longer queued. Surface it; do not
+                    # report failure to a caller who would otherwise retry.
+                    logger.warning(
+                        "Execution queue remove inconsistency for %s "
+                        "(priority=%s): pending entry cleared but deque "
+                        "did not contain the request",
+                        request_id,
+                        request.priority.value,
+                    )
+                    return True
             return False
     
     def get_queue_stats(self) -> Dict[str, int]:
         return {priority.value: len(queue) for priority, queue in self.queues.items()}
+
+
+def _dependency_cycles(
+    step_ids: Set[str], dependencies: Dict[str, List[str]]
+) -> List[List[str]]:
+    """Return each cycle as a closed list of step ids."""
+    cycles: List[List[str]] = []
+    visiting: Set[str] = set()
+    visited: Set[str] = set()
+    stack: List[str] = []
+
+    def walk(node: str) -> None:
+        if node in visited:
+            return
+        if node in visiting:
+            if node in stack:
+                start = stack.index(node)
+                cycles.append(stack[start:] + [node])
+            return
+        visiting.add(node)
+        stack.append(node)
+        for dep in dependencies.get(node, []):
+            if dep in step_ids:
+                walk(dep)
+        stack.pop()
+        visiting.discard(node)
+        visited.add(node)
+
+    for step_id in step_ids:
+        walk(step_id)
+    return cycles
+
+
+def _resident_bytes() -> int:
+    """Current resident set size in bytes. Same reading as the lifecycle monitor."""
+    return current_resident_bytes()
+
+
+def _sample_execution_cost(
+    cpu_before: float, rss_before: int, wall_s: float
+) -> Tuple[int, float]:
+    """Return (memory_used_mb, cpu_percent) for one plugin call."""
+    cpu_s = max(0.0, time.process_time() - cpu_before)
+    # Share of the whole machine. A call that saturates one core on a 4-core
+    # host reports about 25, which is the default per-plugin ceiling, so a
+    # quiet call stays admissible and a tighter manifest limit can still trip.
+    cpu_percent = machine_cpu_percent(cpu_s, wall_s)
+    peak = 0
+    if tracemalloc.is_tracing():
+        _current, peak = tracemalloc.get_traced_memory()
+    rss_delta = max(0, _resident_bytes() - rss_before)
+    memory_bytes = max(peak, rss_delta)
+    memory_mb = int(math.ceil(memory_bytes / (1024 * 1024))) if memory_bytes else 0
+    return memory_mb, round(min(cpu_percent, 100.0), 2)
 
 
 class PluginExecutor:
@@ -211,54 +331,72 @@ class PluginExecutor:
         self.execution_semaphore = asyncio.Semaphore(max_workers)
         
     async def execute_plugin_method(self, plugin: PluginBase, request: ExecutionRequest) -> ExecutionResult:
-        start_time = time.time()
-        
+        start_time = time.perf_counter()
+        cpu_before = time.process_time()
+        rss_before = _resident_bytes()
+        started_trace = False
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
+            started_trace = True
+
         try:
             async with self.execution_semaphore:
                 if not hasattr(plugin, request.method_name):
                     raise AttributeError(f"Plugin {plugin.plugin_id} has no method {request.method_name}")
-                
+
                 method = getattr(plugin, request.method_name)
-                
+
                 if asyncio.iscoroutinefunction(method):
+                    invocation = method(*request.args, **request.kwargs)
                     if request.timeout:
-                        result = await asyncio.wait_for(
-                            method(*request.args, **request.kwargs),
-                            timeout=request.timeout
-                        )
+                        result = await asyncio.wait_for(invocation, timeout=request.timeout)
                     else:
-                        result = await method(*request.args, **request.kwargs)
+                        result = await invocation
                 else:
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
+                    bound = partial(method, *request.args, **request.kwargs)
                     if request.timeout:
                         result = await asyncio.wait_for(
-                            loop.run_in_executor(self.executor, method, *request.args),
-                            timeout=request.timeout
+                            loop.run_in_executor(self.executor, bound),
+                            timeout=request.timeout,
                         )
                     else:
-                        result = await loop.run_in_executor(self.executor, method, *request.args)
-                
-                execution_time = time.time() - start_time
-                
+                        result = await loop.run_in_executor(self.executor, bound)
+
+                execution_time = time.perf_counter() - start_time
+                memory_mb, cpu_percent = _sample_execution_cost(
+                    cpu_before, rss_before, execution_time
+                )
+
                 return ExecutionResult(
                     request_id=request.request_id,
                     plugin_id=plugin.plugin_id,
                     success=True,
                     result=result,
-                    execution_time=execution_time
+                    execution_time=execution_time,
+                    memory_used=memory_mb,
+                    cpu_percent=cpu_percent,
                 )
-                
+
         except Exception as e:
-            execution_time = time.time() - start_time
+            execution_time = time.perf_counter() - start_time
+            memory_mb, cpu_percent = _sample_execution_cost(
+                cpu_before, rss_before, execution_time
+            )
             logger.error(f"Plugin execution failed: {plugin.plugin_id}.{request.method_name}: {e}")
-            
+
             return ExecutionResult(
                 request_id=request.request_id,
                 plugin_id=plugin.plugin_id,
                 success=False,
                 error=e,
-                execution_time=execution_time
+                execution_time=execution_time,
+                memory_used=memory_mb,
+                cpu_percent=cpu_percent,
             )
+        finally:
+            if started_trace and tracemalloc.is_tracing():
+                tracemalloc.stop()
     
     def shutdown(self):
         self.executor.shutdown(wait=True, cancel_futures=True)
@@ -269,6 +407,7 @@ class WorkflowEngine:
         self.workflows: Dict[str, WorkflowDefinition] = {}
         self.executions: Dict[str, WorkflowExecution] = {}
         self.execution_lock = asyncio.Lock()
+        self._reactive_dispatch: Dict[str, Callable] = {}
         
     def register_workflow(self, workflow: WorkflowDefinition):
         self.workflows[workflow.workflow_id] = workflow
@@ -314,8 +453,9 @@ class WorkflowEngine:
                 await self._execute_graph(workflow, execution)
             elif workflow.mode == ExecutionMode.REACTIVE:
                 await self._execute_reactive(workflow, execution)
-            
-            execution.state = WorkflowState.COMPLETED
+
+            if execution.state != WorkflowState.FAILED:
+                execution.state = WorkflowState.COMPLETED
             
         except Exception as e:
             execution.state = WorkflowState.FAILED
@@ -385,11 +525,11 @@ class WorkflowEngine:
                 execution.errors.append(str(e))
     
     async def _execute_graph(self, workflow: WorkflowDefinition, execution: WorkflowExecution):
-        """Execute workflow as a dependency graph with true parallel execution.
+        """Execute a dependency graph.
 
-        Independent steps (those whose dependencies are all satisfied) run
-        concurrently via asyncio.gather, not serially. This fixes D-009 from
-        the defect index where graph mode executed steps one at a time.
+        Steps whose dependencies are satisfied run concurrently. A cycle is
+        reported before any step runs. A missing dependency is reported as
+        its own error rather than being collapsed into a generic deadlock.
         """
         dependency_graph = workflow.dependencies
         completed_steps: Set[str] = set()
@@ -397,6 +537,22 @@ class WorkflowEngine:
             step.get('id', f'step_{i}'): (i, step)
             for i, step in enumerate(workflow.steps)
         }
+        known = set(step_map)
+        missing: List[str] = []
+        for step_id, deps in dependency_graph.items():
+            for dep in deps:
+                if dep not in known:
+                    missing.append(f"{step_id}->{dep}")
+        if missing:
+            execution.errors.append(f"Graph references unknown steps: {missing}")
+            execution.state = WorkflowState.FAILED
+            return
+
+        cycles = _dependency_cycles(known, dependency_graph)
+        if cycles:
+            execution.errors.append(f"Cyclic dependency: {cycles}")
+            execution.state = WorkflowState.FAILED
+            return
 
         while len(completed_steps) < len(workflow.steps):
             ready: List[Tuple[str, Dict[str, Any]]] = []
@@ -436,18 +592,60 @@ class WorkflowEngine:
                     completed_steps.add(step_id)
     
     async def _execute_reactive(self, workflow: WorkflowDefinition, execution: WorkflowExecution):
-        event_handlers = {}
-        
+        """Bind triggers to steps and run anything already queued.
+
+        `execution.context['events']` is a list of `{'name', 'payload'}`
+        dicts drained during this call. Later events go through
+        `dispatch_event`, which invokes every step registered for that
+        trigger. Immediate steps run during setup.
+        """
+        event_handlers: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
         for step_index, step in enumerate(workflow.steps):
             step_id = step.get('id', f'step_{step_index}')
             trigger = step.get('trigger', 'immediate')
-            
+
             if trigger == 'immediate':
-                await self._execute_step(step, execution)
+                result = await self._execute_step(step, execution)
+                execution.results[step_id] = result
             else:
-                event_handlers[trigger] = step
-        
-        execution.context['event_handlers'] = event_handlers
+                event_handlers[trigger].append(step)
+
+        async def dispatch(event_name: str, payload: Any = None) -> List[ExecutionResult]:
+            fired: List[ExecutionResult] = []
+            for step in event_handlers.get(event_name, []):
+                step_id = step.get('id', event_name)
+                step_run = dict(step)
+                kwargs = dict(step_run.get('kwargs') or {})
+                kwargs['event'] = {'name': event_name, 'payload': payload}
+                step_run['kwargs'] = kwargs
+                result = await self._execute_step(step_run, execution)
+                execution.results[step_id] = result
+                fired.append(result)
+            execution.context.setdefault('events_dispatched', []).append(event_name)
+            return fired
+
+        execution.context['event_handlers'] = {
+            trigger: [step.get('id') for step in steps]
+            for trigger, steps in event_handlers.items()
+        }
+        execution.context['dispatch_event'] = dispatch
+        self._reactive_dispatch[execution.execution_id] = dispatch
+
+        for event in list(execution.context.get('events') or []):
+            if isinstance(event, dict):
+                await dispatch(event.get('name', ''), event.get('payload'))
+            else:
+                await dispatch(str(event), None)
+
+    async def dispatch_event(
+        self, execution_id: str, event_name: str, payload: Any = None
+    ) -> List[ExecutionResult]:
+        """Deliver an event to a reactive workflow that is already bound."""
+        dispatch = self._reactive_dispatch.get(execution_id)
+        if dispatch is None:
+            raise KeyError(f"No reactive dispatch registered for execution {execution_id}")
+        return await dispatch(event_name, payload)
     
     async def _execute_step(self, step: Dict[str, Any], execution: WorkflowExecution) -> ExecutionResult:
         plugin_id = step['plugin_id']
@@ -573,7 +771,7 @@ class PluginOrchestrator:
         self.execution_queue = ExecutionQueue()
         self.executor = PluginExecutor()
         self.workflow_engine = WorkflowEngine()
-        self.resource_monitor = ResourceMonitor()
+        self.resource_monitor = ExecutionResourceMonitor()
         
         self.is_running = False
         self.worker_tasks: List[asyncio.Task] = []
@@ -624,6 +822,19 @@ class PluginOrchestrator:
         logger.info("Plugin orchestrator stopped")
     
     async def execute_plugin_request(self, request: ExecutionRequest) -> ExecutionResult:
+        loop = asyncio.get_running_loop()
+        result_future: asyncio.Future = loop.create_future()
+
+        def callback(result: ExecutionResult) -> None:
+            if not result_future.done():
+                result_future.set_result(result)
+
+        # Bind the completion path before the request is visible to a worker.
+        # Assigning the callback after enqueue loses the race: the worker can
+        # dequeue during the await boundary and observe callback is None,
+        # which drops the result and leaves this future pending forever.
+        request.callback = callback
+
         if not await self.execution_queue.enqueue(request):
             return ExecutionResult(
                 request_id=request.request_id,
@@ -631,20 +842,24 @@ class PluginOrchestrator:
                 success=False,
                 error=Exception("Execution queue full")
             )
-        
-        result_future = asyncio.Future()
-        
-        def callback(result: ExecutionResult):
-            if not result_future.done():
-                result_future.set_result(result)
-        
-        request.callback = callback
-        
+
         try:
+            if request.timeout:
+                return await asyncio.wait_for(result_future, timeout=request.timeout)
             return await result_future
         except asyncio.CancelledError:
             await self.execution_queue.remove(request.request_id)
             raise
+        except asyncio.TimeoutError:
+            await self.execution_queue.remove(request.request_id)
+            return ExecutionResult(
+                request_id=request.request_id,
+                plugin_id=request.plugin_id,
+                success=False,
+                error=TimeoutError(
+                    f"Plugin request {request.request_id} exceeded {request.timeout}s"
+                ),
+            )
     
     async def execute_plugin_method(self, plugin_id: str, method_name: str, *args, **kwargs) -> ExecutionResult:
         request = ExecutionRequest(
@@ -725,7 +940,23 @@ class PluginOrchestrator:
             )
         else:
             within_limits, violations = self.resource_monitor.check_resource_limits(request.plugin_id)
-            
+            manifest = getattr(plugin, "manifest", None)
+            if manifest is not None:
+                budget_ok, budget_violations = self.resource_monitor.check_manifest_budget(
+                    request.plugin_id,
+                    int(manifest.memory_limit_mb),
+                    float(manifest.cpu_limit_percent),
+                )
+                if not budget_ok:
+                    within_limits = False
+                    violations.extend(budget_violations)
+                    logger.warning(
+                        "Refusing %s.%s: %s",
+                        request.plugin_id,
+                        request.method_name,
+                        budget_violations,
+                    )
+
             if not within_limits:
                 result = ExecutionResult(
                     request_id=request.request_id,
@@ -736,23 +967,36 @@ class PluginOrchestrator:
             else:
                 try:
                     result = await self.executor.execute_plugin_method(plugin, request)
-                    
+
                     if result.success:
                         self._record_success(request.plugin_id)
                     else:
                         self._record_failure(request.plugin_id, result.error)
-                    
-                    cpu_estimate = min(
-                        result.execution_time / max(asyncio.get_event_loop().time(), 0.001) * 100.0,
-                        100.0,
-                    )
+
                     self.resource_monitor.record_execution(
                         request.plugin_id,
                         result.memory_used,
-                        cpu_estimate,
+                        result.cpu_percent,
                         result.execution_time,
                     )
-                    
+                    if manifest is not None:
+                        within_budget, budget_violations = (
+                            self.resource_monitor.check_manifest_budget(
+                                request.plugin_id,
+                                int(manifest.memory_limit_mb),
+                                float(manifest.cpu_limit_percent),
+                            )
+                        )
+                        if not within_budget:
+                            result.limit_violations.extend(budget_violations)
+                            logger.warning(
+                                "Plugin %s exceeded manifest budget: %s",
+                                request.plugin_id,
+                                budget_violations,
+                            )
+
+                    self._record_plugin_metrics(plugin, result)
+
                 except Exception as e:
                     result = ExecutionResult(
                         request_id=request.request_id,
@@ -767,6 +1011,12 @@ class PluginOrchestrator:
                 request.callback(result)
             except Exception as e:
                 logger.error(f"Callback execution failed: {e}")
+        else:
+            logger.error(
+                "Request %s finished with no callback; the awaiting caller "
+                "would hang if the callback was bound after enqueue",
+                request.request_id,
+            )
         
         for callback in self.execution_callbacks[request.plugin_id]:
             try:
@@ -774,6 +1024,26 @@ class PluginOrchestrator:
             except Exception as e:
                 logger.error(f"Plugin callback failed: {e}")
     
+    def _record_plugin_metrics(self, plugin: Any, result: ExecutionResult) -> None:
+        """Update canonical PluginMetrics from a finished call.
+
+        Plugins loaded through the canonical base already own a metrics
+        object. A plugin that does not is given one here so the metrics
+        loop has a real object to read instead of skipping the plugin.
+        """
+        metrics = getattr(plugin, "metrics", None)
+        if metrics is None:
+            metrics = PluginMetrics()
+            setattr(plugin, "metrics", metrics)
+        if hasattr(metrics, "record_execution"):
+            metrics.record_execution(
+                result.execution_time,
+                max(0, result.memory_used) * 1024 * 1024,
+            )
+            if not result.success and hasattr(metrics, "record_error"):
+                metrics.record_error()
+        self.plugin_performance[plugin.plugin_id] = metrics
+
     def _get_circuit_breaker(self, plugin_id: str) -> CircuitBreaker:
         if plugin_id not in self.circuit_breakers:
             self.circuit_breakers[plugin_id] = CircuitBreaker()
@@ -801,8 +1071,11 @@ class PluginOrchestrator:
                 await asyncio.sleep(10)
                 
                 for plugin_id, plugin in self.plugin_manager.active_plugins.items():
-                    if hasattr(plugin, 'metrics'):
-                        self.plugin_performance[plugin_id] = plugin.metrics
+                    metrics = getattr(plugin, "metrics", None)
+                    if metrics is None:
+                        metrics = PluginMetrics()
+                        setattr(plugin, "metrics", metrics)
+                    self.plugin_performance[plugin_id] = metrics
                 
                 performance_metrics = self.resource_monitor.get_performance_metrics
                 for plugin_id in list(self.plugin_performance.keys()):

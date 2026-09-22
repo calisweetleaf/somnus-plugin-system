@@ -47,287 +47,8 @@ from host_protocols import SessionID, UserID, MemoryManager, MemoryType, MemoryI
 logger = logging.getLogger(__name__)
 
 
-class PluginStatus(str, Enum):
-    """Plugin lifecycle status tracking"""
-    DISCOVERED = "discovered"
-    LOADING = "loading"
-    LOADED = "loaded"
-    ACTIVE = "active"
-    ERROR = "error"
-    DISABLED = "disabled"
-    UNLOADING = "unloading"
-
-
-class PluginType(str, Enum):
-    """Plugin classification for routing and permissions"""
-    API_EXTENSION = "api_extension"
-    UI_COMPONENT = "ui_component"
-    AGENT_ACTION = "agent_action"
-    MEMORY_EXTENSION = "memory_extension"
-    WORKFLOW_NODE = "workflow_node"
-    TOOL_INTEGRATION = "tool_integration"
-    RESEARCH_MODULE = "research_module"
-    CREATIVE_ENGINE = "creative_engine"
-
-
-class PluginPermission(str, Enum):
-    """Granular permission system for plugin capabilities"""
-    READ_MEMORY = "read_memory"
-    WRITE_MEMORY = "write_memory"
-    NETWORK_ACCESS = "network_access"
-    FILE_SYSTEM = "file_system"
-    SYSTEM_COMMANDS = "system_commands"
-    USER_INTERFACE = "user_interface"
-    SESSION_ACCESS = "session_access"
-    AGENT_CONTROL = "agent_control"
-
-
-@dataclass
-class PluginManifest:
-    """Comprehensive plugin metadata and configuration"""
-    name: str
-    version: str
-    description: str
-    author: str
-    plugin_type: PluginType
-    
-    # Dependencies and compatibility
-    morpheus_version_min: str = "1.0.0"
-    morpheus_version_max: str = "2.0.0"
-    python_version_min: str = "3.11"
-    dependencies: List[str] = field(default_factory=list)
-    
-    # Security and permissions
-    permissions: List[PluginPermission] = field(default_factory=list)
-    trusted: bool = False
-    signature: Optional[str] = None
-    
-    # Integration points
-    api_endpoints: List[str] = field(default_factory=list)
-    ui_components: List[str] = field(default_factory=list)
-    agent_actions: List[str] = field(default_factory=list)
-    
-    # Metadata
-    homepage: Optional[str] = None
-    repository: Optional[str] = None
-    license: str = "MIT"
-    tags: List[str] = field(default_factory=list)
-    
-    @classmethod
-    def from_file(cls, manifest_path: Path) -> 'PluginManifest':
-        """Load manifest from JSON file"""
-        with open(manifest_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        return cls(
-            name=data['name'],
-            version=data['version'],
-            description=data['description'],
-            author=data['author'],
-            plugin_type=PluginType(data['plugin_type']),
-            morpheus_version_min=data.get('morpheus_version_min', '1.0.0'),
-            morpheus_version_max=data.get('morpheus_version_max', '2.0.0'),
-            python_version_min=data.get('python_version_min', '3.11'),
-            dependencies=data.get('dependencies', []),
-            permissions=[PluginPermission(p) for p in data.get('permissions', [])],
-            trusted=data.get('trusted', False),
-            signature=data.get('signature'),
-            api_endpoints=data.get('api_endpoints', []),
-            ui_components=data.get('ui_components', []),
-            agent_actions=data.get('agent_actions', []),
-            homepage=data.get('homepage'),
-            repository=data.get('repository'),
-            license=data.get('license', 'MIT'),
-            tags=data.get('tags', [])
-        )
-
-
-class PluginBase(ABC):
-    """
-    Abstract base class for all Morpheus plugins.
-    
-    Provides the foundational interface that all plugins must implement,
-    ensuring compatibility with the recursive consciousness framework.
-    """
-    
-    def __init__(self, plugin_id: str, manifest: PluginManifest, memory_manager: MemoryManager):
-        self.plugin_id = plugin_id
-        self.manifest = manifest
-        self.memory_manager = memory_manager
-        self.status = PluginStatus.DISCOVERED
-        self.created_at = datetime.now(timezone.utc)
-        self.last_accessed = datetime.now(timezone.utc)
-        
-        # Plugin-specific memory namespace
-        self.memory_namespace = f"plugin:{plugin_id}"
-        
-        # Event hooks
-        self.startup_tasks: List[Callable] = []
-        self.shutdown_tasks: List[Callable] = []
-        
-        logger.info(f"Plugin base initialized: {plugin_id}")
-    
-    async def initialize(self) -> bool:
-        """
-        Initialize plugin resources and validate requirements.
-        
-        Returns True if initialization successful, False otherwise.
-        """
-        try:
-            self.status = PluginStatus.LOADING
-            
-            # Validate dependencies
-            if not await self._validate_dependencies():
-                self.status = PluginStatus.ERROR
-                return False
-            
-            # Initialize plugin-specific resources
-            success = await self.on_initialize()
-            
-            if success:
-                self.status = PluginStatus.LOADED
-                logger.info(f"Plugin {self.plugin_id} initialized successfully")
-            else:
-                self.status = PluginStatus.ERROR
-                logger.error(f"Plugin {self.plugin_id} initialization failed")
-            
-            return success
-        
-        except Exception as e:
-            logger.error(f"Plugin {self.plugin_id} initialization error: {e}")
-            self.status = PluginStatus.ERROR
-            return False
-    
-    async def activate(self) -> bool:
-        """Activate plugin and register its capabilities"""
-        try:
-            if self.status != PluginStatus.LOADED:
-                return False
-            
-            # Run startup tasks
-            for task in self.startup_tasks:
-                await task()
-            
-            success = await self.on_activate()
-            
-            if success:
-                self.status = PluginStatus.ACTIVE
-                logger.info(f"Plugin {self.plugin_id} activated")
-            
-            return success
-        
-        except Exception as e:
-            logger.error(f"Plugin {self.plugin_id} activation error: {e}")
-            self.status = PluginStatus.ERROR
-            return False
-    
-    async def deactivate(self) -> bool:
-        """Deactivate plugin and cleanup resources"""
-        try:
-            if self.status != PluginStatus.ACTIVE:
-                return True
-            
-            # Run shutdown tasks
-            for task in self.shutdown_tasks:
-                await task()
-            
-            success = await self.on_deactivate()
-            
-            if success:
-                self.status = PluginStatus.DISABLED
-                logger.info(f"Plugin {self.plugin_id} deactivated")
-            
-            return success
-        
-        except Exception as e:
-            logger.error(f"Plugin {self.plugin_id} deactivation error: {e}")
-            return False
-    
-    async def store_memory(self, key: str, data: Any, importance: MemoryImportance = MemoryImportance.MEDIUM) -> UUID:
-        """Store plugin-specific data in the memory system"""
-        memory_key = f"{self.memory_namespace}:{key}"
-        
-        return await self.memory_manager.store_memory(
-            user_id="system",
-            content=json.dumps(data, default=str),
-            memory_type=MemoryType.SYSTEM_EVENT,
-            importance=importance,
-            tags=[self.plugin_id, "plugin_data"],
-            metadata={
-                'plugin_id': self.plugin_id,
-                'data_key': key,
-                'namespace': self.memory_namespace
-            }
-        )
-    
-    async def retrieve_memory(self, key: str) -> Optional[Any]:
-        """Retrieve plugin-specific data from memory"""
-        memory_key = f"{self.memory_namespace}:{key}"
-        
-        memories = await self.memory_manager.retrieve_memories(
-            user_id="system",
-            query=memory_key,
-            memory_types=[MemoryType.SYSTEM_EVENT],
-            limit=1
-        )
-        
-        if memories:
-            try:
-                return json.loads(memories[0]['content'])
-            except (json.JSONDecodeError, KeyError):
-                return None
-        
-        return None
-    
-    def add_startup_task(self, task: Callable):
-        """Add a task to run during plugin activation"""
-        self.startup_tasks.append(task)
-    
-    def add_shutdown_task(self, task: Callable):
-        """Add a task to run during plugin deactivation"""
-        self.shutdown_tasks.append(task)
-    
-    async def _validate_dependencies(self) -> bool:
-        """Validate plugin dependencies"""
-        for dep in self.manifest.dependencies:
-            try:
-                importlib_metadata.distribution(dep)
-            except importlib_metadata.PackageNotFoundError:
-                logger.error(f"Plugin {self.plugin_id} missing dependency: {dep}")
-                return False
-        
-        return True
-    
-    @abstractmethod
-    async def on_initialize(self) -> bool:
-        """Plugin-specific initialization logic"""
-        pass
-    
-    @abstractmethod
-    async def on_activate(self) -> bool:
-        """Plugin-specific activation logic"""
-        pass
-    
-    @abstractmethod
-    async def on_deactivate(self) -> bool:
-        """Plugin-specific deactivation logic"""
-        pass
-    
-    def get_info(self) -> Dict[str, Any]:
-        """Get plugin information for API/UI"""
-        return {
-            'plugin_id': self.plugin_id,
-            'name': self.manifest.name,
-            'version': self.manifest.version,
-            'description': self.manifest.description,
-            'author': self.manifest.author,
-            'plugin_type': self.manifest.plugin_type.value,
-            'status': self.status.value,
-            'permissions': [p.value for p in self.manifest.permissions],
-            'created_at': self.created_at.isoformat(),
-            'last_accessed': self.last_accessed.isoformat()
-        }
-
+from plugin_base import PluginBase, PluginManifest, PluginPermission, PluginState, PluginType
+from discovery import PluginDiscovery
 
 class PluginSecurityManager:
     """
@@ -340,6 +61,7 @@ class PluginSecurityManager:
     def __init__(self, security_enforcer: SecurityEnforcer):
         self.security_enforcer = security_enforcer
         self.trusted_publishers = set()
+        self.publisher_keys: Dict[str, bytes] = {}
         self.blocked_patterns = [
             r'__import__\s*\(',
             r'eval\s*\(',
@@ -359,7 +81,17 @@ class PluginSecurityManager:
         Returns (is_valid, list_of_issues)
         """
         issues = []
-        
+
+        permitted = await self.security_enforcer.validate_action(
+            "plugin.load",
+            {
+                "plugin": manifest.name,
+                "permissions": [permission.value for permission in manifest.permissions],
+            },
+        )
+        if not permitted:
+            issues.append("Host security enforcer denied plugin.load")
+
         # Manifest validation
         if not await self._validate_manifest(manifest):
             issues.append("Invalid manifest structure")
@@ -367,9 +99,9 @@ class PluginSecurityManager:
         # Code security analysis
         security_issues = await self._analyze_code_security(plugin_path)
         issues.extend(security_issues)
-        
-        # Signature verification (if not trusted)
-        if not manifest.trusted and manifest.signature:
+
+        # `trusted` is a self-assertion and does not skip verification.
+        if manifest.signature:
             if not await self._verify_signature(plugin_path, manifest.signature):
                 issues.append("Invalid cryptographic signature")
         
@@ -421,11 +153,53 @@ class PluginSecurityManager:
         
         return issues
     
+    def register_publisher_key(self, publisher_id: str, public_key: bytes) -> None:
+        """Register a PEM public key. Placeholder material is refused."""
+        if b"..." in public_key:
+            raise ValueError(f"Refusing placeholder key for {publisher_id}")
+        from cryptography.hazmat.primitives import serialization
+        serialization.load_pem_public_key(public_key)
+        self.publisher_keys[publisher_id] = public_key
+        self.trusted_publishers.add(publisher_id)
+
+    def _canonical_plugin_bytes(self, plugin_path: Path) -> bytes:
+        """Deterministic byte image of a plugin tree, used as the signed payload.
+
+        The manifest `signature` field is excluded. A signature cannot cover
+        itself.
+        """
+        chunks: List[bytes] = []
+        files = [
+            item for item in plugin_path.rglob("*")
+            if item.is_file() and "__pycache__" not in item.parts
+        ]
+        for file_path in sorted(files):
+            relative = file_path.relative_to(plugin_path).as_posix().encode()
+            if file_path.name == "manifest.json":
+                payload = json.loads(file_path.read_text(encoding="utf-8"))
+                payload.pop("signature", None)
+                body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            else:
+                body = file_path.read_bytes()
+            chunks.append(relative + b"\0" + body)
+        return b"".join(chunks)
+
     async def _verify_signature(self, plugin_path: Path, signature: str) -> bool:
-        """Verify cryptographic signature of plugin"""
-        # This would implement actual cryptographic verification
-        # For now, return True for demonstration
-        return True
+        """Verify an RSA-PSS signature over the canonical plugin tree.
+
+        The signature string is `rsa_pss_sha256:<hex>`. A missing publisher
+        key fails closed. The previous body returned True unconditionally.
+        """
+        if not self.publisher_keys:
+            logger.error("Plugin signature present and no publisher key is registered")
+            return False
+        from security import CryptographicValidator
+        validator = CryptographicValidator()
+        payload = self._canonical_plugin_bytes(plugin_path)
+        for public_key in self.publisher_keys.values():
+            if await validator.verify_signature(payload, signature, public_key):
+                return True
+        return False
     
     async def _analyze_dependencies(self, dependencies: List[str]) -> List[str]:
         """Analyze plugin dependencies for security risks"""
@@ -441,125 +215,37 @@ class PluginSecurityManager:
         return issues
 
 
-class PluginFileWatcher(FileSystemEventHandler):
-    """File system watcher for plugin hot-reload capabilities"""
-    
-    def __init__(self, plugin_manager: 'PluginManager'):
-        self.plugin_manager = plugin_manager
-        self.debounce_delay = 1.0  # Seconds
-        self.pending_changes = {}
-        
-    def on_modified(self, event):
-        """Handle file modification events"""
-        if event.is_directory:
-            return
-        
-        plugin_path = Path(event.src_path)
-        
-        # Only process Python files in plugin directories
-        if plugin_path.suffix == '.py' and 'plugins' in plugin_path.parts:
-            self._schedule_reload(plugin_path)
-    
-    def _schedule_reload(self, plugin_path: Path):
-        """Schedule plugin reload with debouncing"""
-        plugin_id = self._extract_plugin_id(plugin_path)
-        if not plugin_id:
-            return
-        
-        # Cancel existing timer
-        if plugin_id in self.pending_changes:
-            self.pending_changes[plugin_id].cancel()
-        
-        # Schedule new reload
-        timer = threading.Timer(
-            self.debounce_delay,
-            lambda: asyncio.create_task(self.plugin_manager.reload_plugin(plugin_id))
+def _bind_plugin_endpoint(endpoint, plugin_instance: PluginBase):
+    """Return an endpoint that receives the loaded plugin as plugin_instance.
+
+    Defined outside the registration loop so each route closes over its own
+    endpoint. A nested function declared inside that loop would make every
+    route call the last endpoint.
+
+    The exposed signature drops ``plugin_instance`` and any varargs. FastAPI
+    treats ``*args`` and ``**kwargs`` as required query fields, and it would
+    also publish ``plugin_instance`` as a client-supplied parameter. The
+    instance is injected by this closure, not by the request.
+    """
+    signature = inspect.signature(endpoint)
+    exposed = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.name != "plugin_instance"
+        and parameter.kind not in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
         )
-        timer.start()
-        self.pending_changes[plugin_id] = timer
-        
-        logger.info(f"Scheduled reload for plugin: {plugin_id}")
-    
-    def _extract_plugin_id(self, plugin_path: Path) -> Optional[str]:
-        """Extract plugin ID from file path"""
-        parts = plugin_path.parts
-        try:
-            plugins_index = parts.index('plugins')
-            if plugins_index + 1 < len(parts):
-                return parts[plugins_index + 1]
-        except ValueError:
-            pass
-        
-        return None
+    ]
 
+    async def wrapped_endpoint(*args, **kwargs):
+        kwargs["plugin_instance"] = plugin_instance
+        return await endpoint(*args, **kwargs)
 
-class PluginDiscovery:
-    """
-    Advanced plugin discovery system with intelligent scanning and caching.
-    
-    Handles plugin detection, manifest parsing, and dependency resolution
-    across multiple plugin sources including local, community, and marketplace.
-    """
-    
-    def __init__(self, plugin_dirs: List[Path]):
-        self.plugin_dirs = plugin_dirs
-        self.discovered_plugins: Dict[str, Path] = {}
-        self.plugin_cache: Dict[str, PluginManifest] = {}
-        
-        # Ensure plugin directories exist
-        for plugin_dir in self.plugin_dirs:
-            plugin_dir.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Plugin discovery initialized for {len(plugin_dirs)} directories")
-    
-    async def discover_plugins(self) -> Dict[str, PluginManifest]:
-        """
-        Discover all plugins in configured directories.
-        
-        Returns mapping of plugin_id -> PluginManifest
-        """
-        discovered = {}
-        
-        for plugin_dir in self.plugin_dirs:
-            plugins_in_dir = await self._scan_directory(plugin_dir)
-            discovered.update(plugins_in_dir)
-        
-        self.plugin_cache = discovered
-        logger.info(f"Discovered {len(discovered)} plugins")
-        
-        return discovered
-    
-    async def _scan_directory(self, directory: Path) -> Dict[str, PluginManifest]:
-        """Scan a directory for plugin manifests"""
-        plugins = {}
-        
-        if not directory.exists():
-            return plugins
-        
-        for item in directory.iterdir():
-            if item.is_dir():
-                manifest_path = item / 'manifest.json'
-                if manifest_path.exists():
-                    try:
-                        manifest = PluginManifest.from_file(manifest_path)
-                        plugin_id = f"{manifest.name}_{manifest.version}"
-                        plugins[plugin_id] = manifest
-                        self.discovered_plugins[plugin_id] = item
-                        
-                        logger.debug(f"Discovered plugin: {plugin_id} at {item}")
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to load manifest from {manifest_path}: {e}")
-        
-        return plugins
-    
-    def get_plugin_path(self, plugin_id: str) -> Optional[Path]:
-        """Get the filesystem path for a plugin"""
-        return self.discovered_plugins.get(plugin_id)
-    
-    async def refresh_cache(self):
-        """Refresh the plugin discovery cache"""
-        await self.discover_plugins()
+    wrapped_endpoint.__signature__ = signature.replace(parameters=exposed)
+    wrapped_endpoint.__name__ = getattr(endpoint, "__name__", "plugin_endpoint")
+    wrapped_endpoint.__doc__ = getattr(endpoint, "__doc__", None)
+    return wrapped_endpoint
 
 
 class PluginManager:
@@ -589,14 +275,8 @@ class PluginManager:
         
         # Core components
         self.security_manager = PluginSecurityManager(security_enforcer)
-        self.discovery = PluginDiscovery([
-            plugin_base_dir / "installed",
-            plugin_base_dir / "community",
-        ])
-        
-        # File watching for hot-reload
-        self.file_watcher = PluginFileWatcher(self)
-        self.file_observer = Observer()
+        self.discovery = PluginDiscovery(plugin_base_dir)
+        self.discovery.file_watcher.on_plugin_changed = self.reload_plugin
         
         # Background tasks
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="plugin-mgr")
@@ -614,6 +294,7 @@ class PluginManager:
             self.plugin_base_dir / "community",
             self.plugin_base_dir / "templates",
             self.plugin_base_dir / "sandbox",
+            self.plugin_base_dir / "cache",
         ]
         
         for directory in directories:
@@ -622,16 +303,7 @@ class PluginManager:
     async def start(self):
         """Start the plugin management system"""
         logger.info("Starting plugin management system...")
-        
-        # Start file watching
-        self.file_observer.schedule(
-            self.file_watcher,
-            str(self.plugin_base_dir),
-            recursive=True
-        )
-        self.file_observer.start()
-        
-        # Discover and load plugins
+        await self.discovery.start_monitoring()
         await self.discover_and_load_plugins()
         
         logger.info("Plugin management system started")
@@ -639,25 +311,23 @@ class PluginManager:
     async def stop(self):
         """Stop the plugin management system"""
         logger.info("Stopping plugin management system...")
-        
-        # Stop file watching
-        self.file_observer.stop()
-        self.file_observer.join()
+        await self.discovery.stop_monitoring()
         
         # Deactivate all plugins
         for plugin_id in list(self.active_plugins.keys()):
             await self.deactivate_plugin(plugin_id)
         
-        # Shutdown executor
-        self.executor.shutdown(wait=True, timeout=30)
+        self.executor.shutdown(wait=True, cancel_futures=True)
         
         logger.info("Plugin management system stopped")
     
     async def discover_and_load_plugins(self):
         """Discover all plugins and load them"""
         discovered = await self.discovery.discover_plugins()
-        
-        for plugin_id, manifest in discovered.items():
+        load_order = self.discovery.get_load_order(set(discovered))
+        for plugin_id in load_order:
+            if plugin_id not in discovered:
+                continue
             try:
                 await self.load_plugin(plugin_id)
             except Exception as e:
@@ -757,7 +427,8 @@ class PluginManager:
         except Exception as e:
             logger.error(f"Failed to load plugin module {plugin_id}: {e}")
             return None
-    
+
+
     async def _register_plugin_api(self, plugin_id: str, plugin_instance: PluginBase):
         """Register plugin API endpoints with FastAPI"""
         # Check if plugin has API endpoints
@@ -781,17 +452,13 @@ class PluginManager:
                 if hasattr(api_module, 'router'):
                     router = api_module.router
                     
-                    # Add plugin context to all routes
+                    # Bind each route to this instance. A closure inside the
+                    # loop would capture the last endpoint for every route.
                     for route in router.routes:
                         if hasattr(route, 'endpoint'):
-                            original_endpoint = route.endpoint
-                            
-                            async def wrapped_endpoint(*args, **kwargs):
-                                # Inject plugin context
-                                kwargs['plugin_instance'] = plugin_instance
-                                return await original_endpoint(*args, **kwargs)
-                            
-                            route.endpoint = wrapped_endpoint
+                            route.endpoint = _bind_plugin_endpoint(
+                                route.endpoint, plugin_instance
+                            )
                     
                     # Mount router
                     self.app.include_router(
@@ -902,16 +569,81 @@ class PluginManager:
         ]
     
     async def install_plugin_from_archive(self, archive_path: Path, destination: str = "installed") -> bool:
-        """Install plugin from archive file"""
-        # This would implement plugin installation from ZIP/TAR archives
-        # Including extraction, validation, and dependency installation
-        pass
-    
+        """Install a plugin archive into the local tree and load it.
+
+        Extraction refuses path traversal. The canonical manifest is validated
+        before the tree is moved into the destination, and the security
+        manager runs before load.
+        """
+        from security import ArchivePathError, safe_extract_zip
+
+        if not archive_path.is_file():
+            logger.error("Archive not found: %s", archive_path)
+            return False
+
+        destination_root = self.plugin_base_dir / destination
+        destination_root.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix="somnus_plugin_install_"))
+        try:
+            try:
+                safe_extract_zip(archive_path, staging)
+            except ArchivePathError as exc:
+                logger.error("Archive rejected: %s", exc)
+                return False
+
+            plugin_dir = staging
+            if not (plugin_dir / "manifest.json").is_file():
+                nested = [item for item in staging.iterdir() if (item / "manifest.json").is_file()]
+                if len(nested) != 1:
+                    logger.error("Archive does not contain exactly one plugin manifest")
+                    return False
+                plugin_dir = nested[0]
+
+            manifest = PluginManifest.from_file(plugin_dir / "manifest.json")
+            valid, issues = await self.security_manager.validate_plugin(plugin_dir, manifest)
+            if not valid:
+                logger.error("Archive %s failed validation: %s", manifest.name, issues)
+                return False
+
+            target = destination_root / manifest.name
+            if target.exists():
+                import shutil
+                shutil.rmtree(target)
+            import shutil
+            shutil.move(str(plugin_dir), str(target))
+            await self.discovery.scan_plugin_directory(target)
+            return await self.load_plugin(manifest.name)
+        except Exception as exc:
+            logger.error("Archive install failed: %s", exc)
+            return False
+        finally:
+            import shutil
+            shutil.rmtree(staging, ignore_errors=True)
+
     async def get_plugin_marketplace_info(self) -> Dict[str, Any]:
-        """Get information about available marketplace plugins"""
-        # This would implement marketplace integration
-        # Including browsing, searching, and downloading plugins
-        pass
+        """Report the local plugin inventory and the disabled network posture.
+
+        Remote registry browsing is not performed. The network path stays off
+        until an operator constructs a PluginMarketplace with network_enabled
+        and a registry URL they control.
+        """
+        discovered: Dict[str, Dict[str, Any]] = {}
+        for plugin_id, index in getattr(self.discovery, "plugin_index", {}).items():
+            discovered[plugin_id] = {
+                "name": index.manifest.name,
+                "version": index.manifest.version,
+                "author": index.manifest.author,
+                "plugin_type": index.manifest.plugin_type.value,
+                "path": str(index.path),
+                "capabilities": [cap.value for cap in index.manifest.capabilities],
+            }
+        return {
+            "network_enabled": False,
+            "installed": self.list_plugins(),
+            "discovered": discovered,
+            "publisher_keys": sorted(self.security_manager.publisher_keys),
+            "active_count": len(self.active_plugins),
+        }
 
 
 # Plugin API Models for frontend integration
