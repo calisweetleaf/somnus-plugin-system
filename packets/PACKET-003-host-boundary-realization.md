@@ -1,7 +1,7 @@
 # PACKET-003 — Host Boundary Realization
 
 **Owner:** next executing agent
-**Status:** QUEUED
+**Status:** LANDED
 **Depends on:** PACKET-001
 **Size:** one session
 **Priority:** medium — required before this substrate can be embedded in any host

@@ -1,7 +1,7 @@
 # PACKET-002 — Lineage Convergence
 
 **Owner:** next executing agent, or `.claude/agents/lineage-convergence-surgeon`
-**Status:** QUEUED
+**Status:** LANDED
 **Depends on:** PACKET-001
 **Size:** one session
 **Priority:** high — this is the repository's defining defect

@@ -136,10 +136,20 @@ class DiscoverySource:
 class PluginFileWatcher(FileSystemEventHandler):
     """Real-time file system monitoring for plugin changes"""
     
-    def __init__(self, discovery_engine: 'PluginDiscovery'):
+    def __init__(self, discovery_engine: 'PluginDiscovery', on_plugin_changed=None):
         self.discovery_engine = discovery_engine
+        self.on_plugin_changed = on_plugin_changed
         self.debounce_delay = 1.0
         self.pending_scans: Dict[str, asyncio.Task] = {}
+        self._closed = False
+        self._in_callback: Set[str] = set()
+
+    def close(self) -> None:
+        """Refuse new rescans and callbacks. In-flight reloads are drained, not torn."""
+        self._closed = True
+
+    def reopen(self) -> None:
+        self._closed = False
         
     def on_any_event(self, event):
         """Handle any file system event"""
@@ -178,25 +188,74 @@ class PluginFileWatcher(FileSystemEventHandler):
         return None
     
     def _schedule_scan(self, plugin_dir: Path):
-        """Schedule plugin directory scan with debouncing"""
+        """Schedule plugin directory scan with debouncing.
+
+        Watchdog invokes this from a thread that does not own the event loop.
+        The coroutine is created on the loop captured by start_monitoring.
+        A closed watcher drops the event so stop_monitoring cannot be raced
+        by a debounce that reloads a plugin after the caller believes
+        monitoring has ended.
+        """
+        if self._closed:
+            return
         plugin_id = plugin_dir.name
-        
-        # Cancel existing scan
-        if plugin_id in self.pending_scans:
-            self.pending_scans[plugin_id].cancel()
-        
-        # Schedule new scan
-        async def delayed_scan():
-            await asyncio.sleep(self.debounce_delay)
-            try:
-                await self.discovery_engine.scan_plugin_directory(plugin_dir)
-                logger.debug(f"Rescanned plugin directory: {plugin_dir}")
-            except Exception as e:
-                logger.error(f"Failed to rescan plugin directory {plugin_dir}: {e}")
-            finally:
-                self.pending_scans.pop(plugin_id, None)
-        
-        self.pending_scans[plugin_id] = asyncio.create_task(delayed_scan())
+        loop = getattr(self.discovery_engine, "_loop", None)
+        if loop is None or not loop.is_running():
+            logger.error("Discovery loop is not running; plugin rescan was not scheduled")
+            return
+
+        def _kick() -> None:
+            if self._closed:
+                return
+            existing = self.pending_scans.get(plugin_id)
+            if existing is not None and not existing.done():
+                existing.cancel()
+
+            async def delayed_scan() -> None:
+                try:
+                    await asyncio.sleep(self.debounce_delay)
+                    if self._closed:
+                        return
+                    index = await self.discovery_engine.scan_plugin_directory(plugin_dir)
+                    logger.debug("Rescanned plugin directory: %s", plugin_dir)
+                    if (
+                        self._closed
+                        or index is None
+                        or self.on_plugin_changed is None
+                    ):
+                        return
+                    self._in_callback.add(plugin_id)
+                    try:
+                        await self.on_plugin_changed(index.plugin_id)
+                    finally:
+                        self._in_callback.discard(plugin_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error("Failed to rescan plugin directory %s: %s", plugin_dir, exc)
+                finally:
+                    current = self.pending_scans.get(plugin_id)
+                    if current is asyncio.current_task():
+                        self.pending_scans.pop(plugin_id, None)
+
+            self.pending_scans[plugin_id] = asyncio.create_task(delayed_scan())
+
+        loop.call_soon_threadsafe(_kick)
+
+    async def drain(self) -> None:
+        """Cancel debounces that have not entered a reload, then wait.
+
+        A reload already inside ``on_plugin_changed`` is awaited so the
+        plugin is not left half-unloaded. Sleeping scans are cancelled
+        before they can replace the live instance.
+        """
+        pending = list(self.pending_scans.values())
+        for plugin_id, task in list(self.pending_scans.items()):
+            if plugin_id not in self._in_callback and not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self.pending_scans.clear()
 
 
 class DependencyResolver:
@@ -447,7 +506,10 @@ class PluginCompatibilityChecker:
         
         # Check capability requirements
         system_capabilities = set(system_info.get('capabilities', []))
-        required_caps = set(plugin.capabilities)
+        required_caps = {
+            cap.value if hasattr(cap, "value") else str(cap)
+            for cap in plugin.capabilities
+        }
         missing_caps = required_caps - system_capabilities
         
         if missing_caps:
@@ -680,10 +742,13 @@ class PluginDiscovery:
         
         # Background tasks
         self.background_tasks: Set[asyncio.Task] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         
     async def start_monitoring(self):
         """Start real-time file system monitoring"""
         try:
+            self._loop = asyncio.get_running_loop()
+            self.file_watcher.reopen()
             self.observer = Observer()
             
             for source_name, source_path in self.discovery_sources.items():
@@ -705,12 +770,18 @@ class PluginDiscovery:
             logger.error(f"Failed to start plugin monitoring: {e}")
     
     async def stop_monitoring(self):
-        """Stop file system monitoring"""
+        """Stop file system monitoring and any debounce that would reload a plugin."""
+        self.file_watcher.close()
         if self.observer:
             self.observer.stop()
             self.observer.join(timeout=5)
             self.observer = None
-        
+
+        # Join can queue watchdog callbacks. They observe the closed flag.
+        # Drain after the observer is down so a debounce cannot reload a
+        # plugin once the caller has been told monitoring has stopped.
+        await self.file_watcher.drain()
+
         # Cancel background tasks
         for task in self.background_tasks:
             task.cancel()
@@ -759,8 +830,13 @@ class PluginDiscovery:
         return discovered_plugins
     
     async def scan_plugin_directory(self, plugin_dir: Path) -> Optional[PluginIndex]:
-        """Scan specific plugin directory"""
-        return await self.scanner._scan_plugin_directory(plugin_dir, DiscoverySource.FILESYSTEM)
+        """Scan one plugin directory and publish it into the live index."""
+        index = await self.scanner._scan_plugin_directory(plugin_dir, DiscoverySource.FILESYSTEM)
+        if index is not None:
+            self.plugin_index[index.plugin_id] = index
+            self._bloom.add(index.plugin_id)
+            self.dependency_resolver.add_plugin(index.plugin_id, index.dependencies)
+        return index
     
     async def refresh_cache(self):
         """Refresh plugin discovery cache"""

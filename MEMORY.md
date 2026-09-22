@@ -437,7 +437,41 @@ A generated map, a summary, or the router never owns behavior it merely describe
 
 ---
 
+## 2026-09-22 — DEFECT CLOSURE AND REFERENCE PLUGIN
+
+**Decision.** D-001 through D-022 are closed in the live modules. The original mechanism text in `docs/DEFECT_INDEX.md` stays as evidence. Current behavior is the closure ledger in that file and `STATE.md`.
+
+**Decision.** The marketplace network stays disabled. Empty registry URLs are the default. `marketplace.morpheus.ai` and `community.morpheus.ai` are not restored. Trust keys, when used, come from `SOMNUS_MARKETPLACE_TRUST_KEYS`. No trust root is committed. A sha256 checksum is integrity, not a signature. Server-asserted `trust_score` is recorded as `server_asserted_trust` and is not an admission input.
+
+**Decision.** CPU percentages are a share of the machine (`process_time / wall / cpu_count`), shared by `plugin_base.machine_cpu_percent` and execution sampling. Memory admission uses live RSS growth, not `ru_maxrss`. Manifest ceilings are checked before the next call.
+
+**Decision.** `PluginDiscovery.stop_monitoring` closes the watcher and cancels debounced rescans that have not entered a reload. An in-flight reload is awaited. This is what keeps an in-memory manifest from being replaced by the on-disk copy after the caller has stopped monitoring.
+
+**Decision.** `installed/example_plugin/` is the reference plugin `somnus_reference`. It subclasses `plugin_base.PluginBase`, the class is named `Plugin`, and `api/__init__.py` exports `router`. `memory/extensions/` is a directory.
+
+**Decision.** FastAPI route binding is one closure per route. The wrapper signature omits `plugin_instance` so the client cannot supply it and FastAPI does not require it as a query field.
+
+---
+
 ## Known Hazards / Anti-Rediscovery Index
+
+Superseded on 2026-09-22, kept so the old claim is not rediscovered as current truth:
+
+- `LOADER-GATE` — **superseded.** The loader accepts `plugin_base.PluginBase`. The class must be named `Plugin`.
+- `MISSING-PERMISSION-SYMBOL` — **superseded.** `PluginPermission` is defined in `plugin_base.py`.
+- `PLUGINSTATE-AMBIGUITY` — **superseded.** Hot reload uses `PluginRuntimeSnapshot`.
+- `EMPTY-REFERENCE-PLUGIN` — **superseded.** `installed/example_plugin/` is `somnus_reference`.
+- `PHANTOM-REGISTRY` — **superseded as a default.** Those hostnames are not configured. Do not put them back.
+- `FAKE-SIGNATURE` — **superseded.** RSA-PSS is required. A checksum is not a signature.
+- `ENV-NO-DEPS` — **superseded.** `.venv` exists and the modules import.
+
+Still live:
+
+- `INHERITED-DOC-DRIFT` — extraction carried documentation forward while the code's context changed. Verify any inherited status claim against source. See `2026-09-05 — NEGATIVE KNOWLEDGE`.
+- `BOUNDARY-SEVERING` — reimplementing host types locally to make imports resolve is attractive and wrong. `host_protocols.py` is the seam. See `2026-09-05 — REJECTED PATH: SEVERING THE HOST BOUNDARY`.
+- `NETWORK-STAYS-OFF` — closing SEC-02 through SEC-08 did not authorize `network_enabled=True`. Operator-supplied URLs and keys are required.
+
+Historical entries follow.
 
 - `LOADER-GATE` — the only working loader rejects plugins written against the canonical base
   class. `plugin_manager.py:701`. See `2026-09-05 — LINEAGE RULING`.

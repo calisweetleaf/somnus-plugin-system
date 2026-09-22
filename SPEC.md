@@ -11,14 +11,12 @@
 
 ## 0. Status of this contract
 
-This specification describes the **target** contract. Part of it is live in source today and
-part of it lands in `packets/PACKET-002-lineage-convergence.md`. Every clause is marked:
+This specification describes the contract that source implements. Clauses are marked:
 
-- **LIVE** — implemented in source now, at the cited line.
-- **PENDING-002** — ruled, specified, not yet in source. Do not assume it works.
+- **LIVE** — implemented in source now.
 
-An agent authoring a plugin **today** must read §7 before writing anything, because the only
-working loader still gates against the superseded base class.
+Lineage convergence has landed. Author against `plugin_base.PluginBase` with a class named
+`Plugin`. The worked example is `installed/example_plugin/` (`somnus_reference`).
 
 ---
 
@@ -26,19 +24,21 @@ working loader still gates against the superseded base class.
 
 | Concern | Canonical surface | Status |
 |---|---|---|
-| Manifest schema | `plugin_base.py:79` `PluginManifest` (pydantic `BaseModel`) | LIVE |
-| Capability taxonomy | `plugin_base.py:28` `PluginCapability` | LIVE |
-| Lifecycle states | `plugin_base.py:40` `PluginState` | LIVE |
-| Runtime context | `plugin_base.py:53` `PluginContext` | LIVE |
-| Runtime metrics | `plugin_base.py:67` `PluginMetrics` | LIVE |
-| Base class | `plugin_base.py:230` `PluginBase` | LIVE |
-| Permission taxonomy | `PluginPermission`, moving from `plugin_manager.py:75` into `plugin_base.py` | PENDING-002 |
-| Type taxonomy | `PluginType`, moving from `plugin_manager.py:63` into `plugin_base.py` | PENDING-002 |
-| Loader | `load_plugin`, moving from `plugin_manager.py:668` onto the canonical base | PENDING-002 |
-| API mounting | `_register_plugin_api`, moving from `plugin_manager.py:763` | PENDING-002 |
+| Manifest schema | `plugin_base.PluginManifest` (pydantic `BaseModel`) | LIVE |
+| Capability taxonomy | `plugin_base.PluginCapability` | LIVE |
+| Lifecycle states | `plugin_base.PluginState` | LIVE |
+| Runtime context | `plugin_base.PluginContext` | LIVE |
+| Runtime metrics | `plugin_base.PluginMetrics` | LIVE |
+| Base class | `plugin_base.PluginBase` | LIVE |
+| Permission taxonomy | `plugin_base.PluginPermission` | LIVE |
+| Type taxonomy | `plugin_base.PluginType` | LIVE |
+| Loader | `plugin_manager.PluginManager.load_plugin` | LIVE |
+| API mounting | `plugin_manager.PluginManager._register_plugin_api` | LIVE |
 
-**Superseded and scheduled for deletion in PACKET-002:** `plugin_manager.py`'s `PluginManifest`
-(88), `PluginBase` (147), `PluginDiscovery` (498), `PluginFileWatcher` (446), `PluginStatus` (52).
+The rival `PluginManifest`, `PluginBase`, `PluginDiscovery`, and `PluginFileWatcher` that used
+to live in `plugin_manager.py` are deleted. `hot_reload` names its snapshot
+`PluginRuntimeSnapshot`. Marketplace listing state is `ListingStatus`. The orchestrator's
+monitor is `ExecutionResourceMonitor`.
 
 ---
 
@@ -57,11 +57,10 @@ defaults and silently accepted anything.
 | `version` | `str` | 82 |
 | `description` | `str` | 83 |
 | `author` | `str` | 84 |
-| `plugin_type` | `str` | 85 |
+| `plugin_type` | `PluginType` | — |
 
-**Known contract weakness:** `plugin_type` is typed as a bare `str` here, while the superseded
-lineage typed it as the `PluginType` enum (`plugin_manager.py:66`). PACKET-002 narrows this
-field to `PluginType`. Until then any string validates.
+`plugin_type` is `plugin_base.PluginType`. A string that is not one of the eight enum values
+fails validation.
 
 ### Advanced capabilities — 4 fields
 
@@ -86,15 +85,13 @@ field to `PluginType`. Until then any string validates.
 
 | Field | Type | Default | Constraint | Line |
 |---|---|---|---|---|
-| `permissions` | `List[str]` | `[]` | — | 101 |
+| `permissions` | `List[PluginPermission]` | `[]` | eight closed values | — |
 | `trusted` | `bool` | `False` | — | 102 |
 | `signature` | `Optional[str]` | `None` | — | 103 |
 | `security_level` | `int` | `1` | `ge=1, le=5` | 104 |
 
-**PENDING-002:** `permissions` is narrowed from free-form `List[str]` to
-`List[PluginPermission]`. `security.py` already consumes it as the enum (`:220`, `:223`,
-`:226`, `:229`, `:419`, `:433`, `:703-705`) — the type is the thing that is missing, not the
-intent.
+`permissions` is `List[PluginPermission]`. `security.py` consumes the enum. `trusted` is a
+self-assertion and does not skip signature verification.
 
 ### Integration points — 5 fields
 
@@ -153,15 +150,14 @@ touch. Do not conflate them.
 
 ## 4. Permission taxonomy — `PluginPermission`
 
-Currently `plugin_manager.py:75-84`. **PENDING-002** — moves into `plugin_base.py`. Eight values.
+`plugin_base.PluginPermission`. **LIVE.** Eight values.
 
 `read_memory` · `write_memory` · `network_access` · `file_system` · `system_commands` ·
 `user_interface` · `session_access` · `agent_control`
 
 ## 5. Type taxonomy — `PluginType`
 
-Currently `plugin_manager.py:63-72`. **PENDING-002** — moves into `plugin_base.py` and becomes
-the type of the `plugin_type` manifest field. Eight values.
+`plugin_base.PluginType`. **LIVE.** It is the type of the `plugin_type` manifest field. Eight values.
 
 `api_extension` · `ui_component` · `agent_action` · `memory_extension` · `workflow_node` ·
 `tool_integration` · `research_module` · `creative_engine`
@@ -208,23 +204,24 @@ names with no cleanup hook. **Do not write `on_initialize`.**
 
 `get_state()` · `set_state()` · `checkpoint_state()` · `restore_checkpoint()`
 
-Checkpoints persist through `memory_manager.store_memory(...)`. Note `plugin_base.py:444-446`
-carries an in-place hand-patch from `MemoryType.SYSTEM`/`MemoryScope.PLUGIN` to
-`MemoryType.USER`/`MemoryScope.USER`, with the prior values still visible in comments —
-evidence of an incomplete repair against a shifted donor API. See `docs/DEFECT_INDEX.md` D-021.
+Checkpoints persist through `memory_manager.store_memory(...)` as `MemoryType.USER` and
+`MemoryScope.USER`. That classification is the checkpoint contract. D-021 is closed.
 
-### Declared but unimplemented interfaces
+### Consciousness and network interfaces
 
-`ConsciousnessInterface` (`plugin_base.py:168`) and `NetworkInterface` (`:211`) are declared
-ABCs that nothing implements. `PluginBase` (`:230`) inherits only `PluginInterface`,
-`StateInterface`, `ABC`. Do not assume a plugin can rely on them.
+`PluginBase` implements `ConsciousnessInterface` and `NetworkInterface`. Consciousness methods
+are `consciousness_sync`, `quantum_coherence_check`, `recursive_depth_analysis`,
+`enter_recursive_frame`, and `leave_recursive_frame`. Network methods are `network_request`,
+`websocket_connect`, and `p2p_communicate`. `network_request` and `websocket_connect` require
+`PluginPermission.NETWORK_ACCESS` and speak http(s) or ws(s). `p2p_communicate` delivers to
+another loaded plugin in-process and requires the same permission. D-020 is closed.
 
 ---
 
 ## 7. Loader contract — read this before authoring
 
-Currently `plugin_manager.py:668-809`. **PENDING-002** for re-basing; the mechanism itself is
-LIVE and is what actually loads plugins today.
+`plugin_manager.PluginManager.load_plugin`. **LIVE.** It constructs `plugin_base.PluginManifest`
+and accepts `plugin_base.PluginBase`.
 
 ### Plugin module
 
@@ -238,21 +235,20 @@ if not plugin_class or not issubclass(plugin_class, PluginBase):  # :701
 plugin_instance = plugin_class(plugin_id, manifest, self.memory_manager)  # :706
 ```
 
-> **LOAD-BEARING HAZARD.** The `issubclass` check at `:701` resolves `PluginBase` to the
-> **superseded** local class at `plugin_manager.py:147` — not the canonical
-> `plugin_base.PluginBase` at `:230`. **A plugin authored against this specification is
-> rejected by the current loader.** This is the single edge PACKET-002 exists to remove.
-> Until it lands, authoring against §6 produces a plugin that validates and does not load.
+The `issubclass` check resolves `PluginBase` to `plugin_base.PluginBase`. A plugin authored
+against this specification is what the loader accepts.
 
-Construction is three positional arguments: `(plugin_id, manifest, memory_manager)`. The
-canonical `PluginBase.__init__` (`plugin_base.py:236-240`) accepts a fourth,
-`consciousness_level=0.0`, defaulted — so the three-argument call site remains compatible.
+Construction is three positional arguments: `(plugin_id, manifest, memory_manager)`.
+`PluginBase.__init__` accepts a fourth, `consciousness_level=0.0`, defaulted — so the
+three-argument call site remains compatible.
 
 ### API extension
 
-`_register_plugin_api` (`:763-809`) imports **`api/__init__.py`** — **not** `api/routes.py` —
-and expects a module attribute named `router` (`:783`). Each route's endpoint is wrapped to
-inject the plugin instance (`:791-796`) and mounted at `/api/plugins/{plugin_id}` (`:799-803`).
+`_register_plugin_api` imports **`api/__init__.py`** — **not** `api/routes.py` —
+and expects a module attribute named `router`. Each route is bound to the loaded instance
+through a per-route closure. The wrapper's public signature omits `plugin_instance`, and
+FastAPI therefore does not require the client to send it. The router is mounted at
+`/api/plugins/{plugin_id}`.
 
 **Unstated contract made explicit here:** if you split an API extension into `routes.py` and
 `models.py`, `api/__init__.py` **must re-export `router`**. Nothing else in the tree is imported.
@@ -284,20 +280,22 @@ conventional, not functional. Treat them as reserved surface.
 └── assets/                 reserved — no loader reads this
 ```
 
-Discovery keys plugins as `f"{name}_{version}"` and reads `manifest.json` per subdirectory
-(`plugin_manager.py:498-564`).
+Discovery indexes a plugin by `manifest.name` and reads `manifest.json` per subdirectory.
+`somnus_reference` is the id of the reference plugin, not `somnus_reference_1.0.0`.
 
-`installed/example_plugin/` currently matches this layout with **every file at 0 bytes**. It is
-a skeleton, not a reference. A real reference implementation lands in
-`packets/PACKET-004-reference-plugin.md`.
+`installed/example_plugin/` is that reference. Its manifest validates, `class Plugin` subclasses
+`plugin_base.PluginBase`, and `api/__init__.py` exports `router`. `memory/extensions/` is a
+directory. Load proof: `experiments/prove_reference_plugin.py`.
 
 ---
 
 ## 9. What this contract does not cover
 
-- **Runtime behavior of `orchestration.py`, `marketplace.py`, `hot_reload.py`.** Those modules
-  are unreferenced by anything today and carry the defects registered in
-  `docs/DEFECT_INDEX.md`. They are not part of the plugin authoring contract.
+- **Scheduling, distribution, and hot reload internals.** Those modules are part of the
+  substrate. Their defect register is closed; see `docs/DEFECT_INDEX.md`. They are not required
+  reading for authoring a plugin.
 - **Host-supplied types.** `MemoryManager`, `MemoryType`, `MemoryImportance`, `MemoryScope`,
   `SessionID`, `UserID`, `SecurityEnforcer` are the embedding system's. See `HOST_BOUNDARY.md`.
-- **Trust and signing.** See `OPSEC.md`. Do not rely on `marketplace.py`'s signature path.
+  This repository satisfies them with protocols in `host_protocols.py`. Do not vendor replacements.
+- **Trust and signing.** See `OPSEC.md`. A signature is `rsa_pss_sha256:<hex>` over the canonical
+  tree with the signature field excluded. The marketplace network path stays off unless configured.

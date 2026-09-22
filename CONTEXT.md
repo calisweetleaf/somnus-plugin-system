@@ -209,6 +209,18 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-22 — DEFECT REGISTER CLOSED; REFERENCE PLUGIN LOADS
+
+**Keys:** `D-001` · `D-022` · `SEC-01` · `SEC-10` · `somnus_reference` · `safe_extract_zip` · `ExecutionResourceMonitor` · `network_enabled` · `prove_defect_closure` · `prove_reference_plugin`
+
+- **State:** D-001 through D-022 are closed in source. `PACKET-001` through `PACKET-004` are landed. The marketplace network defaults off. `installed/example_plugin/` is the loadable reference plugin `somnus_reference`.
+- **Changed:** orchestration admission and workflows; marketplace verification, trust, download cap, and local registry; lineage types deleted from `plugin_manager.py`; consciousness and network methods on `PluginBase`; watcher drain on `stop_monitoring`; per-route endpoint binding; reference plugin tree; continuity surfaces.
+- **Evidence:** `experiments/prove_defect_closure.py` 38/38. `experiments/prove_reference_plugin.py` 8/8. `bash gate.sh` runnable checks pass. Packet validation `NOT RUN`. Pytest suite `NOT RUN`.
+- **Next read:** `STATE.md`, then the closure ledger in `docs/DEFECT_INDEX.md`, then `OPSEC.md` section 3.
+- **Open:** an operator decision before any marketplace network is enabled.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

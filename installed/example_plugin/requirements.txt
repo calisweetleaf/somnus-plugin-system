@@ -1,0 +1,2 @@
+# Host-provided. somnus_reference imports plugin_base and fastapi from the
+# embedding process. It declares no additional third-party distributions.

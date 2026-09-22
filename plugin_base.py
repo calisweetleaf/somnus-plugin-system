@@ -27,6 +27,7 @@ import resource
 import struct
 import sys
 import time
+from urllib.parse import urlparse
 from abc import ABC, abstractmethod
 from collections import deque
 from contextlib import asynccontextmanager
@@ -284,6 +285,7 @@ class PluginEventType(str, Enum):
     RESOURCE_LIMIT_EXCEEDED = "resource_limit_exceeded"
     ERROR = "error"
     METRICS_SNAPSHOT = "metrics_snapshot"
+    PEER_MESSAGE = "peer_message"
 
 
 @dataclass(frozen=True)
@@ -599,28 +601,70 @@ class StateCheckpoint:
 # Resource monitor with real measurement
 # ---------------------------------------------------------------------------
 
-class ResourceMonitor:
-    """Resource monitoring for plugins with real OS-level measurement.
+def current_resident_bytes() -> int:
+    """Live resident set size.
 
-    Uses stdlib resource module for memory tracking and asyncio task
-    timing for CPU approximation, replacing the zero-valued placeholders
-    from the original implementation.
+    ``/proc/self/statm`` is the current RSS. ``resource.ru_maxrss`` is a
+    high-water mark and stays elevated after the allocation is freed, so it
+    is only the fallback when the proc file is unavailable.
+    """
+    try:
+        with open("/proc/self/statm", "r", encoding="ascii") as handle:
+            resident_pages = int(handle.readline().split()[1])
+        return resident_pages * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, IndexError, ValueError):
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        if sys.platform == "darwin":
+            return int(usage.ru_maxrss)
+        return int(usage.ru_maxrss) * 1024
+
+
+def machine_cpu_percent(cpu_seconds: float, wall_seconds: float) -> float:
+    """CPU as a share of the whole machine, capped at 100.
+
+    ``process_time`` sums every core. Dividing by ``cpu_count`` keeps a
+    single-threaded call on a 4-core host near 25 instead of 100, which is
+    the same unit the manifest's ``cpu_limit_percent`` is enforced in.
+    """
+    cores = max(1, os.cpu_count() or 1)
+    if wall_seconds <= 1e-9:
+        return 0.0
+    return round(min(max(0.0, cpu_seconds) / wall_seconds * 100.0 / cores, 100.0), 2)
+
+
+class ResourceMonitor:
+    """Resource monitoring for one loaded plugin.
+
+    CPU is the machine share over the latest sample interval, not the
+    lifetime ratio of process CPU to wall time. Memory is resident growth
+    since ``initialize``, so the host process is not charged against the
+    plugin manifest. Both readings use the same units as execution admission.
     """
 
     def __init__(self, manifest: PluginManifest) -> None:
         self.manifest = manifest
         self._memory_high_water: int = 0
+        self._baseline_rss: int = 0
         self._cpu_time_start: float = 0.0
         self._wall_start: float = 0.0
+        self._last_cpu: float = 0.0
+        self._last_wall: float = 0.0
+        self._cpu_percent: float = 0.0
         self._monitoring_task: Optional[asyncio.Task[None]] = None
         self._limits_exceeded: bool = False
+        self._memory_hot: bool = False
+        self._cpu_hot: bool = False
         self._violation_log: Deque[str] = deque(maxlen=50)
 
     async def initialize(self) -> None:
         """Capture baseline resource usage."""
-        self._memory_high_water = self._get_rss_bytes()
+        self._baseline_rss = current_resident_bytes()
+        self._memory_high_water = 0
         self._cpu_time_start = time.process_time()
         self._wall_start = time.monotonic()
+        self._last_cpu = self._cpu_time_start
+        self._last_wall = self._wall_start
+        self._cpu_percent = 0.0
 
     async def start(self) -> None:
         """Begin continuous resource monitoring."""
@@ -640,49 +684,49 @@ class ResourceMonitor:
 
     def snapshot(self) -> Dict[str, Any]:
         """Current resource usage snapshot."""
-        elapsed = time.monotonic() - self._wall_start if self._wall_start else 0.0
-        cpu_used = time.process_time() - self._cpu_time_start if self._cpu_time_start else 0.0
-        cpu_pct = (cpu_used / elapsed * 100.0) if elapsed > 0 else 0.0
+        attributed = max(0, current_resident_bytes() - self._baseline_rss)
         return {
-            "memory_rss_bytes": self._get_rss_bytes(),
+            "memory_rss_bytes": attributed,
             "memory_high_water_bytes": self._memory_high_water,
             "memory_limit_bytes": self.manifest.memory_limit_mb * 1024 * 1024,
-            "cpu_percent": round(cpu_pct, 2),
+            "cpu_percent": self._cpu_percent,
             "cpu_limit_percent": self.manifest.cpu_limit_percent,
             "limits_exceeded": self._limits_exceeded,
             "violation_count": len(self._violation_log),
         }
 
-    @staticmethod
-    def _get_rss_bytes() -> int:
-        """Get current resident set size via stdlib resource module."""
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        if sys.platform == "darwin":
-            return usage.ru_maxrss  # macOS reports bytes
-        return usage.ru_maxrss * 1024  # Linux reports KB
+    def _note_violation(self, message: str) -> None:
+        self._violation_log.append(message)
+        logger.warning(message)
 
     async def _monitor_loop(self) -> None:
         while True:
             try:
-                rss = self._get_rss_bytes()
-                self._memory_high_water = max(self._memory_high_water, rss)
+                now_cpu = time.process_time()
+                now_wall = time.monotonic()
+                cpu_pct = machine_cpu_percent(now_cpu - self._last_cpu, now_wall - self._last_wall)
+                self._last_cpu = now_cpu
+                self._last_wall = now_wall
+                self._cpu_percent = cpu_pct
+
+                attributed = max(0, current_resident_bytes() - self._baseline_rss)
+                self._memory_high_water = max(self._memory_high_water, attributed)
 
                 limit_bytes = self.manifest.memory_limit_mb * 1024 * 1024
-                if rss > limit_bytes:
-                    self._limits_exceeded = True
-                    msg = f"Memory {rss // (1024*1024)}MB exceeds limit {self.manifest.memory_limit_mb}MB"
-                    self._violation_log.append(msg)
-                    logger.warning(msg)
-
-                elapsed = time.monotonic() - self._wall_start
-                cpu_used = time.process_time() - self._cpu_time_start
-                if elapsed > 0:
-                    cpu_pct = cpu_used / elapsed * 100.0
-                    if cpu_pct > self.manifest.cpu_limit_percent:
-                        self._limits_exceeded = True
-                        msg = f"CPU {cpu_pct:.1f}% exceeds limit {self.manifest.cpu_limit_percent}%"
-                        self._violation_log.append(msg)
-                        logger.warning(msg)
+                memory_over = attributed > limit_bytes
+                cpu_over = cpu_pct > self.manifest.cpu_limit_percent
+                if memory_over and not self._memory_hot:
+                    self._note_violation(
+                        f"Memory {attributed // (1024*1024)}MB exceeds limit "
+                        f"{self.manifest.memory_limit_mb}MB"
+                    )
+                if cpu_over and not self._cpu_hot:
+                    self._note_violation(
+                        f"CPU {cpu_pct:.1f}% exceeds limit {self.manifest.cpu_limit_percent}%"
+                    )
+                self._memory_hot = memory_over
+                self._cpu_hot = cpu_over
+                self._limits_exceeded = memory_over or cpu_over
 
                 await asyncio.sleep(1.0)
 
@@ -703,6 +747,11 @@ class PluginBase(ABC):
 
     Plugins extend this class and implement the four abstract hooks:
         _plugin_initialize, _plugin_activate, _plugin_deactivate, _plugin_cleanup
+
+    The class also satisfies ConsciousnessInterface and NetworkInterface.
+    Network calls require PluginPermission.NETWORK_ACCESS. Peer messaging
+    stays inside the process: a plugin here is a loaded codebase, and peers
+    are other loaded plugins, not an implicit internet path.
 
     The base class provides:
     - Validated state transitions via a directed graph
@@ -740,8 +789,12 @@ class PluginBase(ABC):
         self._quantum_state: Dict[str, Any] = {}
         self._recursive_depth: int = 0
         self._temporal_anchor: datetime = datetime.now(timezone.utc)
+        self._inbox: List[Dict[str, Any]] = []
+        self._live_sockets: List[Any] = []
 
         logger.info(f"Plugin {plugin_id} created with consciousness level {consciousness_level}")
+
+    _peers: ClassVar[Dict[str, "PluginBase"]] = {}
 
     def _transition_state(self, target: PluginState) -> None:
         """Validate and execute a state transition against the directed graph."""
@@ -807,6 +860,7 @@ class PluginBase(ABC):
                 success = await self._plugin_activate()
 
                 if success:
+                    PluginBase._peers[self.plugin_id] = self
                     await self._emit_event(PluginEventType.ACTIVATED)
                     logger.info(f"Plugin {self.plugin_id} activated")
                 else:
@@ -827,6 +881,8 @@ class PluginBase(ABC):
 
         try:
             self._transition_state(PluginState.TERMINATING)
+            PluginBase._peers.pop(self.plugin_id, None)
+            await self._close_live_sockets()
             await self._resource_monitor.stop()
             success = await self._plugin_deactivate()
 
@@ -918,6 +974,9 @@ class PluginBase(ABC):
         await self.memory_manager.store_memory(
             user_id=f"plugin_{self.plugin_id}",
             content=f"Checkpoint {ckpt.checkpoint_id}",
+            # Plugin checkpoints are user-scoped memories. MemoryType.SYSTEM and
+            # MemoryScope values other than USER remain on the host protocol for
+            # host events; they are not the checkpoint classification.
             memory_type=MemoryType.USER,
             importance=MemoryImportance.HIGH,
             scope=MemoryScope.USER,
@@ -1032,6 +1091,141 @@ class PluginBase(ABC):
     async def _cleanup_consciousness(self) -> None:
         self._consciousness_coherence = 0.0
         self._quantum_state.clear()
+
+    # -- ConsciousnessInterface ------------------------------------------------
+
+    async def consciousness_sync(self, level: float) -> bool:
+        """Set the plugin consciousness level and resynchronize coherence."""
+        if not 0.0 <= level <= 1.0:
+            logger.error(
+                "Plugin %s refused consciousness level %s outside [0, 1]",
+                self.plugin_id,
+                level,
+            )
+            return False
+        self.consciousness_level = level
+        if not self._quantum_state:
+            await self._initialize_consciousness()
+        return await self._synchronize_consciousness()
+
+    async def quantum_coherence_check(self) -> float:
+        """Return the current coherence in [0, 1] from level drift."""
+        if not self._quantum_state:
+            await self._initialize_consciousness()
+        drift = abs(self._consciousness_coherence - self.consciousness_level)
+        coherence = max(0.0, min(1.0, 1.0 - drift))
+        self._quantum_state["coherence_level"] = coherence
+        self.metrics.consciousness_coherence = coherence
+        return coherence
+
+    async def recursive_depth_analysis(self) -> Dict[str, Any]:
+        """Report recursion depth against the manifest limit."""
+        limit = self.manifest.recursive_depth_limit
+        return {
+            "plugin_id": self.plugin_id,
+            "current_depth": self._recursive_depth,
+            "limit": limit,
+            "within_limit": self._recursive_depth <= limit,
+            "remaining": max(0, limit - self._recursive_depth),
+            "coherence": self._consciousness_coherence,
+            "quantum_state": dict(self._quantum_state),
+        }
+
+    def enter_recursive_frame(self) -> bool:
+        """Advance one recursive frame. Returns False when the limit is hit."""
+        if self._recursive_depth >= self.manifest.recursive_depth_limit:
+            return False
+        self._recursive_depth += 1
+        return True
+
+    def leave_recursive_frame(self) -> None:
+        self._recursive_depth = max(0, self._recursive_depth - 1)
+
+    # -- NetworkInterface ------------------------------------------------------
+
+    def _require_network_permission(self) -> None:
+        if PluginPermission.NETWORK_ACCESS not in self.manifest.permissions:
+            raise PermissionError(
+                f"Plugin {self.plugin_id} does not declare NETWORK_ACCESS"
+            )
+
+    async def network_request(self, method: str, url: str, **kwargs: Any) -> Dict[str, Any]:
+        """Perform one HTTP request. Schemes other than http/https are refused."""
+        self._require_network_permission()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"Refusing URL with scheme {parsed.scheme!r}")
+        import aiohttp
+
+        timeout_s = float(kwargs.pop("timeout", 30))
+        payload = kwargs.pop("json", None)
+        body = kwargs.pop("data", None)
+        headers = kwargs.pop("headers", None)
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(
+                method.upper(),
+                url,
+                json=payload,
+                data=body,
+                headers=headers,
+            ) as response:
+                text = await response.text()
+                return {
+                    "status": response.status,
+                    "headers": {key: value for key, value in response.headers.items()},
+                    "body": text[:1_000_000],
+                    "url": str(response.url),
+                }
+
+    async def websocket_connect(self, url: str) -> Any:
+        """Open a websocket and retain it until deactivate closes it."""
+        self._require_network_permission()
+        parsed = urlparse(url)
+        if parsed.scheme not in ("ws", "wss") or not parsed.netloc:
+            raise ValueError(f"Refusing websocket URL with scheme {parsed.scheme!r}")
+        import aiohttp
+
+        session = aiohttp.ClientSession()
+        try:
+            socket = await session.ws_connect(url)
+        except Exception:
+            await session.close()
+            raise
+        self._live_sockets.append((session, socket))
+        return socket
+
+    async def p2p_communicate(self, peer_id: str, message: Dict[str, Any]) -> bool:
+        """Deliver a message to another loaded plugin in this process."""
+        self._require_network_permission()
+        peer = PluginBase._peers.get(peer_id)
+        if peer is None:
+            logger.warning("Plugin %s has no peer %s", self.plugin_id, peer_id)
+            return False
+        envelope = {
+            "from": self.plugin_id,
+            "to": peer_id,
+            "message": message,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        peer._inbox.append(envelope)
+        await peer._emit_event(PluginEventType.PEER_MESSAGE, envelope)
+        return True
+
+    def peer_inbox(self) -> List[Dict[str, Any]]:
+        return list(self._inbox)
+
+    async def _close_live_sockets(self) -> None:
+        while self._live_sockets:
+            session, socket = self._live_sockets.pop()
+            try:
+                await socket.close()
+            except Exception as exc:
+                logger.error("Websocket close failed: %s", type(exc).__name__)
+            try:
+                await session.close()
+            except Exception as exc:
+                logger.error("HTTP session close failed: %s", type(exc).__name__)
 
     # -- Abstract hooks -------------------------------------------------------
 

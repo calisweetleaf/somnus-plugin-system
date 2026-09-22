@@ -1,0 +1,57 @@
+{
+  "name": "somnus_reference",
+  "version": "1.0.0",
+  "description": "Canonical reference plugin. A loaded codebase that exercises the plugin contract: manifest, four lifecycle hooks, consciousness readings, content-addressed checkpoints, and a mounted API.",
+  "author": "Somnus Sovereign Systems",
+  "plugin_type": "api_extension",
+  "capabilities": [
+    "memory_integration",
+    "consciousness_access",
+    "real_time_adaptation"
+  ],
+  "consciousness_level_required": 0.0,
+  "recursive_depth_limit": 8,
+  "quantum_coherence_required": false,
+  "morpheus_version_min": "1.0.0",
+  "morpheus_version_max": "2.0.0",
+  "python_version_min": "3.11",
+  "dependencies": [],
+  "plugin_dependencies": [],
+  "permissions": [
+    "read_memory",
+    "write_memory",
+    "user_interface"
+  ],
+  "trusted": false,
+  "signature": null,
+  "security_level": 1,
+  "api_endpoints": [
+    "/contract",
+    "/lifecycle",
+    "/checkpoint"
+  ],
+  "ui_components": [],
+  "agent_actions": [
+    "describe_contract",
+    "record_observation"
+  ],
+  "workflow_nodes": [
+    "reference.observe"
+  ],
+  "memory_extensions": [
+    "user_checkpoint"
+  ],
+  "memory_limit_mb": 256,
+  "cpu_limit_percent": 25.0,
+  "network_access_required": false,
+  "file_system_access": [],
+  "tags": [
+    "reference",
+    "canonical",
+    "contract"
+  ],
+  "license": "MIT",
+  "homepage": null,
+  "repository": null,
+  "documentation": "assets/contract.md"
+}

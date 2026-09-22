@@ -52,6 +52,7 @@ packages = []
 # Flat layout, intentional. The 7 modules sit at the repository root because this package
 # is embedded as a subpackage of a larger system. Do not migrate to src/.
 py-modules = [
+  "host_protocols",
   "plugin_base",
   "plugin_manager",
   "security",

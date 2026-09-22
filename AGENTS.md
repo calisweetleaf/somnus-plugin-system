@@ -34,16 +34,17 @@ trajectory is deliberate over-engineering: strict deep integration, no thin adap
 
 | Fact | Status |
 |---|---|
-| Does it run? | **No.** Nothing in this repository imports today. |
-| Why | No dependencies installed, no `.venv`. Host is Python 3.12.3. |
-| Deeper blocker | `security.py:34` imports a symbol `plugin_base.py` does not define. **PREDICTED, not yet observed.** |
-| Architectural fact | Two rival plugin lineages shared this directory. `plugin_base.py` is **ruled canonical**; the merge has **not** been executed. |
-| Active packet | `PACKET-001` — dependency and import truth. Unblocks everything. |
-| Test suite | **Does not exist.** No `tests/`, no pytest config, no CI. |
-| Gate | `bash gate.sh` — reports `NOT RUN` for every dependency-gated check. |
+| Does it run? | **Yes.** The seven root modules and `host_protocols.py` import. A canonical plugin loads. |
+| Dependencies | `.venv` is present. Host is Python 3.12. |
+| Lineage | `plugin_base.py` is canonical in source. `PluginManifest`, `PluginBase`, `PluginDiscovery`, and `PluginFileWatcher` are each defined once. |
+| Loader | `plugin_manager.py` loads `class Plugin(plugin_base.PluginBase)` and mounts `api/__init__.py:router`. |
+| Marketplace network | **Off.** URLs default empty. No `morpheus.ai` host is configured. |
+| Reference plugin | `installed/example_plugin/` is `somnus_reference` and loads. |
+| Active packet | None. `PACKET-001` through `PACKET-004` are landed. |
+| Test suite | No pytest suite, by design. Proofs are `experiments/prove_defect_closure.py` and `experiments/prove_reference_plugin.py`. |
+| Gate | `bash gate.sh` — runnable checks pass. Packet validation and the pytest suite are `NOT RUN`. |
 
-**Landed** this session: the control plane below. **Not landed:** any source change. The lineage
-convergence is specified, not executed.
+**Landed:** control plane, dependency truth, lineage convergence, host-protocol boundary, the defect register D-001 through D-022, and the reference plugin.
 
 ---
 
@@ -95,14 +96,14 @@ the documents were inherited from a donor codebase whose context changed underne
 
 | Surface | Owns | Open when | Does **not** own | Neighbors | Evidence on change |
 |---|---|---|---|---|---|
-| `plugin_base.py` (620) | **CANONICAL** plugin contract: manifest, capabilities, lifecycle, base class | Authoring or changing any plugin type | Loading, module import, FastAPI mounting | consumed by `discovery`, `orchestration`, `security`, `marketplace` | `SPEC.md` must be updated in the same turn |
-| `plugin_manager.py` (1055) | **SUPERSEDED.** Retains the only loader (`:668`) and FastAPI mount (`:763`) | Working on loading or API mounting | The contract — its `PluginManifest`/`PluginBase` are scheduled for deletion | zero inbound consumers | `PACKET-002` |
-| `security.py` (914) | Trust boundary, AST analysis, sandbox | Any trust or code-analysis work | Distribution trust scoring | consumed by `marketplace.py:28` | `OPSEC.md` |
-| `discovery.py` (824) | Discovery, dependency graph (`:134`), topological sort (`:304`) | Discovery or dependency work | Execution scheduling | consumes `plugin_base` | — |
-| `orchestration.py` (734) | Priority-queued async dispatch + workflow interpretation | Scheduling or workflow work | Dependency resolution — that is `discovery.py` | consumes `plugin_base`; consumed by nothing | `docs/DEFECT_INDEX.md` D-001, D-002, D-009–D-014 |
-| `hot_reload.py` (834) | Development reload, state preservation | Reload work | Lifecycle states — its `PluginState` is a different concept | consumed by nothing | — |
-| `marketplace.py` (845) | Distribution | Distribution work | Trust enforcement — that is `security.py` | consumes `plugin_base`, `security` | `OPSEC.md` SEC-02…SEC-08 |
-| `installed/` | Plugin installation root | Installing or scaffolding a plugin | Nothing — `example_plugin/` is **14 files at 0 bytes** | `SPEC.md` §8 | `PACKET-004` |
+| `plugin_base.py` | **CANONICAL** plugin contract: manifest, capabilities, lifecycle, base class, consciousness and network methods | Authoring or changing any plugin type | Loading, module import, FastAPI mounting | consumed by `discovery`, `orchestration`, `security`, `marketplace`, `plugin_manager` | `SPEC.md` must be updated in the same turn |
+| `plugin_manager.py` | Loader, FastAPI mount, publisher-signature check | Working on loading or API mounting | The contract — that is `plugin_base.py` | uses canonical types; rival classes are deleted | load proof in `experiments/prove_reference_plugin.py` |
+| `security.py` | Trust boundary, AST analysis, sandbox, `safe_extract_zip` | Any trust or code-analysis work | Distribution trust scoring | consumed by `marketplace` and the loader | `OPSEC.md` |
+| `discovery.py` | Discovery, dependency graph, topological sort, file watcher | Discovery or dependency work | Execution scheduling | consumes `plugin_base` | `stop_monitoring` drains debounced reloads |
+| `orchestration.py` | Priority-queued async dispatch + workflow interpretation | Scheduling or workflow work | Dependency resolution — that is `discovery.py` | consumes `plugin_base` | `docs/DEFECT_INDEX.md` closure ledger |
+| `hot_reload.py` | Development reload, state preservation (`PluginRuntimeSnapshot`) | Reload work | Lifecycle states — those are `plugin_base.PluginState` | consumed by nothing directly | — |
+| `marketplace.py` | Distribution. Network defaults off. Local registry transport | Distribution work | Trust enforcement — that is `security.py` | consumes `plugin_base`, `security` | `OPSEC.md` |
+| `installed/` | Plugin installation root. `example_plugin/` is `somnus_reference` | Installing or changing the reference plugin | The contract text — that is `SPEC.md` | `SPEC.md` §8 | `experiments/prove_reference_plugin.py` |
 
 ### Control plane
 
@@ -266,12 +267,16 @@ These prune the real dangerous branches. They are guardrails, not suggestions.
    `core.security_layer` are the embedding contract. See `HOST_BOUNDARY.md`.
 2. **Do not migrate to `src/`** or restructure the flat layout. It is intentional — this package
    is embedded in larger systems.
-3. **Do not build on `plugin_manager.py`'s `PluginManifest`, `PluginBase`, `PluginDiscovery`, or
-   `PluginFileWatcher`.** They are scheduled for deletion.
-4. **Do not author a plugin against `plugin_base.PluginBase` and expect it to load.** The current
-   loader gates on the superseded class at `plugin_manager.py:701`. See `SPEC.md` §7.
-5. **Do not treat `installed/example_plugin/` as a reference.** It is 14 files at 0 bytes.
-6. **Do not enable the marketplace network path.** See `OPSEC.md` SEC-02 through SEC-08.
+3. **Do not reintroduce `plugin_manager.py` copies of `PluginManifest`, `PluginBase`,
+   `PluginDiscovery`, or `PluginFileWatcher`.** Those rival types were deleted. The loader and
+   the FastAPI mount stay in `plugin_manager.py` and use the canonical types.
+4. **Author plugins against `plugin_base.PluginBase`.** The loader requires a module-level class
+   named `Plugin`. See `SPEC.md` §7 and `installed/example_plugin/`.
+5. **`installed/example_plugin/` is the reference plugin `somnus_reference`.** Do not replace it
+   with a zero-byte skeleton.
+6. **Do not enable the marketplace network path by default.** `network_enabled` stays false.
+   Registry URLs stay empty until an operator supplies them. Do not restore
+   `marketplace.morpheus.ai` or `community.morpheus.ai` as defaults. See `OPSEC.md`.
 7. **Do not manufacture a test suite** to produce a passing gate.
 8. **Do not trust an inherited status claim** without checking it against source.
 9. **Do not use minimizing language** — `thin`, `quick`, `small`, `easy` — for canonical code,
@@ -441,8 +446,8 @@ The purpose of this project is to Darwinism the best of the best modules of Daer
 > In this repository `TASK.md` is the packet board and `packets/` holds the packets — a second
 > planning surface would create a rival authority, which is the exact failure mode this control
 > plane prevents. `example.py` is a generic doctrine placeholder carried in from the shared
-> constitution; the equivalent surface here is `installed/example_plugin/`, which is currently
-> 14 files at 0 bytes and is populated by `packets/PACKET-004-reference-plugin.md`.
+> constitution; the equivalent surface here is `installed/example_plugin/`, the reference
+> plugin `somnus_reference` landed by `packets/PACKET-004-reference-plugin.md`.
 > Read the doctrine for its shape; read section 5 above for this repository's actual route.
 
 - For every `TASK.md` in the current `PLAN.md`, you will have Packets. A packet is how you break unknown goals, into checkpoint step driven roadmaps.
