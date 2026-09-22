@@ -312,7 +312,7 @@ Additional corrections from review, not from the cold agent:
 - **Validation:**
   - `.venv/bin/python experiments/prove_defect_closure.py` — 38/38 PASS
   - `.venv/bin/python experiments/prove_reference_plugin.py` — 8/8 PASS
-  - `bash gate.sh` — see the exit report recorded with this commit. Packet validation NOT RUN (validator absent). Pytest suite NOT RUN by design.
+  - `bash gate.sh` at `928aec7` — PASS 17, FAIL 0, PENDING 0. NOT RUN: packet validation (`validate-packet.mjs` absent) and the pytest suite (none exists, by design).
 - **Proof facts:**
   - D-011 admission refused `loaderproof.ping` at 4MB / 25% against a 1MB / 1% manifest, on the same live instance.
   - D-010 parallel overlap about 0.47s; cyclic graph FAILED with a cycle diagnostic.

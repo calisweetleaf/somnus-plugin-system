@@ -22,7 +22,7 @@
 | Defect register D-001..D-022 | **CLOSED** — `experiments/prove_defect_closure.py` 38/38 |
 | Reference plugin | **OBSERVED** — `experiments/prove_reference_plugin.py` 8/8 |
 | Marketplace network | **OFF** — empty URL defaults, `network_enabled` false |
-| Gate | **PASS** on runnable checks. Packet validation `NOT RUN` (validator absent). Pytest suite `NOT RUN` by design. Zero-byte `installed/` check clears once this tree is what the gate scans. |
+| Gate | **PASS** 17, FAIL 0, PENDING 0 at `928aec7`. Packet validation `NOT RUN` (`validate-packet.mjs` absent). Pytest suite `NOT RUN` by design. |
 
 ## 2. What is the gate posture?
 
