@@ -1,0 +1,13 @@
+---
+description: Operator self-evolution notes for this repository
+alwaysApply: true
+---
+
+# Self-evolution
+
+- Authority convergence is the defining defect. Do not add mechanisms until one heartbeat runs through canonical base, discovery, security, and the loader.
+- `host_protocols.py` is a contract, not a host. Prove hosting with Protocol-conforming stand-ins in the harness only.
+- Plugin identity is `{manifest.name}_{manifest.version}`. Discovery, loader, and marketplace must use the same key.
+- After any lineage change, `grep -c "^class PluginManifest"` (and Base / Discovery / FileWatcher) must be exactly 1.
+- Permissions are descriptive until the capability façade lands. Do not claim a manifest field is enforcement.
+- Graduated execution domains: trusted native stays in-process; untrusted may isolate. Not every plugin is a subprocess.

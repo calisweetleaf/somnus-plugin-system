@@ -297,3 +297,98 @@ Additional corrections from review, not from the cold agent:
 - **Hazards:** `plugin_manager.py`'s loader at `:701` still gates on its local `PluginBase`.
   Until that gate is re-based, plugins authored against the canonical `plugin_base.PluginBase`
   are rejected by the only working loader.
+
+### 2026-09-18 23:15 UTC — Stilgar (Cursor Grok 4.6) — Authority Convergence
+
+- Base: `82dab8d`
+- Did: Completed PACKET-002 remainder and PACKET-004. Gutted duplicate types from
+  `plugin_manager.py`. Loader imports canonical `PluginBase` / `PluginManifest`,
+  `discovery.PluginDiscovery`, `security.SecurityManager`. Populated
+  `installed/example_plugin/`. Checkpoint hashing now uses canonical plugin-owned
+  state and returns the stored id on duplicate content.
+- Validation:
+  - `.venv/bin/python validate_system.py` — 19/19 PASS including `production_load_path`
+  - `bash gate.sh` — PASS, 0 PENDING, 2 NOT RUN
+  - `grep ^class PluginManifest|PluginBase|PluginDiscovery|PluginFileWatcher` — exactly one each
+- Proof facts:
+  - Production path loaded `example_plugin_1.0.0` as `plugin_base.PluginBase`
+  - Duplicate checkpoint returned the same id and restore succeeded
+  - FastAPI route wrapper binds `original_endpoint` per iteration
+  - `SecurityEnforcer` retained on `PluginManager`; `PluginSecurityManager` deleted
+  - Permissions remain descriptive until PACKET-005
+- Surfaces synchronized: SPEC.md, HOST_BOUNDARY.md, OPSEC.md, AUTHORITY_MAP.md,
+  STATE.md, TASK.md, AGENTS.md, packets 001-007, NOTEPAD.md
+- Next agent: Execute PACKET-005 execution boundary.
+- Hazards: in-process `exec_module` still has host privileges; marketplace extractall
+  still unsafe; hot reload still in-place.
+
+### 2026-09-18 23:20 UTC — Stilgar (Cursor Grok 4.6) — Execution Boundary
+
+- Base: `1d5e07b`
+- Did: Landed PACKET-005. `HostCapabilityFacade` is the only MemoryManager a
+  plugin receives. `agent_actions` is the orchestrator allow-list. Isolated
+  plugins import in `plugin_worker.worker_entry` after sandbox staging.
+  In-process timeouts record `NOT TERMINABLE`. Isolated timeouts terminate
+  the worker PID. Orchestrator CPU is sampled over the request window.
+- Validation:
+  - `.venv/bin/python validate_system.py` — 22/22 PASS
+  - Isolated hang killed pid 3867; crash stayed in the worker
+  - Verified probe denied `store_memory` with `CapabilityDenied`
+- Proof facts:
+  - `example_plugin_1.0.0` loaded HOST_INTEGRATED with a façade
+  - `verified_probe_1.0.0` domain VERIFIED; WRITE_MEMORY absent
+  - `isolated_probe_1.0.0` / `isolated_crash_1.0.0` never host-imported
+- Surfaces synchronized: SPEC.md, OPSEC.md, STATE.md, TASK.md, AGENTS.md,
+  filetree.md, packets/PACKET-005
+- Next agent: Execute PACKET-006 transactional lifecycle.
+- Hazards: marketplace extractall still unsafe; hot reload still in-place;
+  FastAPI still mutates route endpoints.
+
+### 2026-09-18 23:26 UTC — Stilgar (Cursor Grok 4.6) — Transactional Lifecycle
+
+- Base: `1429bc1`
+- Did: Landed PACKET-006. Zip members with `..`, absolute paths, or links are
+  rejected before extract. Local install stages, boot-probes, then promotes a
+  live symlink. Reload builds N+1, swings the generation table, then drains N.
+  Host owns `/api/plugins/{plugin_id}/{path:path}`. Watchdog schedules onto the
+  manager loop. Marketplace network path stays disabled.
+- Validation: `.venv/bin/python validate_system.py` — 25/25 PASS
+- Proof facts: zip-slip rejected; staged install g1; failed N+1 left live
+  serving; host route reload swung g1→g2 without include_router
+- Next agent: Execute PACKET-007 truth harness.
+- Hazards: none remaining on the local install path.
+
+### 2026-09-18 23:28 UTC — Stilgar (Cursor Grok 4.6) — Truth Harness
+
+- Base: `0007476`
+- Did: Landed PACKET-007. Harness checks are labeled component vs E2E.
+  Added malformed signature, import-time exception, dependency cycle,
+  generation state migration, and restart recovery. `tools/state_probe.py`
+  writes mechanical facts into STATE.md. Restore across generations now
+  searches by checkpoint id.
+- Validation: `.venv/bin/python validate_system.py` — 30/30 PASS
+  (component 18/18, e2e 12/12). `bash gate.sh` PASS on runnable checks.
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.
+
+### 2026-09-18 23:30 UTC — Stilgar (Cursor Grok 4.6) — Truth Harness revalidation
+
+- Base: `34dfeca`
+- Did: Re-ran the labeled harness and gate after the PACKET-007 commit.
+  Mechanical probe now cites HEAD `34dfeca` and run `20260918T232952Z`.
+- Validation: `validate_system.py` 30/30 PASS (18 component / 12 e2e).
+  `bash gate.sh` PASS 23 / PENDING 0 / NOT RUN 2 (packet validator missing;
+  no pytest suite by design).
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.
+
+### 2026-09-18 23:33 UTC — Stilgar (Cursor Grok 4.6) — Contract/boundary audit repair
+
+- Base: `6c55ac7`
+- Did: Read-only `plugin-contract-auditor` and `host-boundary-validator` returned
+  SPEC/HOST_BOUNDARY citation drift, not runtime breaks. Repaired SPEC §§2/6/7/9,
+  HOST_BOUNDARY header and method table, host_protocols comments, and the
+  32-field manifest comment. Auditors wrote nothing; gate.sh refreshed the
+  mechanical probe while they ran.
+- Next agent: Embed this runtime in a host. Do not add more mechanisms.
+- Hazards: marketplace network path remains disabled.

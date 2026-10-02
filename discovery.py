@@ -24,7 +24,7 @@ import sys
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
 
-from plugin_base import PluginManifest, PluginCapability, PluginType
+from plugin_base import PluginManifest, PluginCapability, PluginType, plugin_identity
 
 logger = logging.getLogger(__name__)
 
@@ -585,7 +585,7 @@ class PluginScanner:
             
             # Create index entry
             index = PluginIndex(
-                plugin_id=manifest.name,
+                plugin_id=plugin_identity(manifest.name, manifest.version),
                 manifest=manifest,
                 path=plugin_dir,
                 hash=dir_hash,

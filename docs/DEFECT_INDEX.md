@@ -435,7 +435,8 @@ scope=MemoryScope.USER,               # changed from MemoryScope.PLUGIN
 
 ### D-022 — Manifest schema drift between lineages
 **Severity:** HIGH
-**Evidence:** VERIFIED-BY-READ
+**Status:** CLOSED 2026-09-18 — loader constructs `plugin_base.PluginManifest` only.
+**Evidence:** VERIFIED-BY-READ, then closed by PACKET-002 remainder
 
 `plugin_manager.py:88-141` — the `PluginManifest` dataclass the only fully-wired loader (`plugin_manager.py:687`, `PluginManifest.from_file`) actually parses at runtime — has no `capabilities` field, no `workflow_nodes` field, no `memory_extensions` field, no `security_level` field, and no resource-limit fields (`memory_limit_mb`, `cpu_limit_percent`). It types `plugin_type` as a `PluginType` enum (`plugin_manager.py:63`) and `permissions` as `List[PluginPermission]` (enum, `plugin_manager.py:75`).
 

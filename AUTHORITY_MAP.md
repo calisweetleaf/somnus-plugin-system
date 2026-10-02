@@ -212,34 +212,19 @@ contract the embedding system fulfils. Full detail in `HOST_BOUNDARY.md`.
 Recorded, not resolved. Each names the surface that wins and the packet that lands the fix.
 
 **CONTRADICTION-01 — `PluginPermission` is on the wrong side of the seam.**
-`security.py:34` does `from plugin_base import PluginManifest, PluginPermission`. Repository-wide,
-`class PluginPermission` exists only at `plugin_manager.py:75`. `security.py` consumes the symbol
-at lines 220, 223, 226, 229, 419, 433, and 703-705.
-*Winner:* `plugin_base.py` — the symbol belongs in the canonical lineage.
-*Status:* grep-verified absent. The `ImportError` itself is **PREDICTED, NOT YET OBSERVED** —
-the prerequisite (dependency install) has not run. Do not report it as observed.
-*Lands in:* PACKET-002, gated behind PACKET-001.
+*Resolved 2026-09-18.* `PluginPermission` lives in `plugin_base.py`. `import security` succeeds.
+The production loader calls `security.SecurityManager`.
 
 **CONTRADICTION-02 — `PluginState` names two unrelated concepts.**
-`plugin_base.py:40` is a `str` Enum of 8 lifecycle states. `hot_reload.py:56` is a dataclass
-holding a runtime snapshot.
-*Winner:* `plugin_base.py` keeps the name. `hot_reload.py`'s type is renamed.
-*Lands in:* PACKET-002.
+*Resolved 2026-09-18.* `hot_reload.PluginRuntimeSnapshot` is the snapshot dataclass.
+`plugin_base.PluginState` remains the lifecycle enum.
 
 **CONTRADICTION-03 — five further duplicate type names.**
-`PluginManifest` (`plugin_base.py:79` vs `plugin_manager.py:88`), `PluginBase`
-(`:230` vs `:147`), `PluginDiscovery` (`discovery.py:578` vs `plugin_manager.py:498`),
-`PluginFileWatcher` (`discovery.py:64` vs `plugin_manager.py:446`), `ResourceMonitor`
-(`plugin_base.py:569` vs `orchestration.py:105`), `PluginStatus` (`plugin_manager.py:52` vs
-`marketplace.py:40`).
-*Winner:* the canonical lineage in every case, except `ResourceMonitor` where the two are
-genuinely different scopes (per-plugin vs workflow-level) and both survive under distinct names.
-*Lands in:* PACKET-002.
+*Resolved 2026-09-18.* Manager-local duplicates deleted. `orchestration.WorkflowResourceMonitor`
+and `marketplace.ListingStatus` are the surviving distinct concepts.
 
 **CONTRADICTION-04 — `installed/example_plugin/` is described as complete and is empty.**
-`TODO.md:68` asserted "Complete example with all interfaces." All 14 files are 0 bytes.
-*Winner:* the filesystem.
-*Resolved:* `TODO.md` deleted this session. A real reference implementation lands in PACKET-004.
+*Resolved 2026-09-18.* Reference plugin is populated and loads through `PluginManager`.
 
 **CONTRADICTION-05 — `AGENTS.md` pointed at surfaces that did not exist.**
 The pre-repair `AGENTS.md` referenced `workflows.md`, `OPSEC.md`, `STATE.md`, `PLAN.md`,

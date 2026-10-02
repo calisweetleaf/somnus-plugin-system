@@ -4,12 +4,9 @@
 # Idempotent. Creates ./.venv and installs the pyproject dependency contract
 # (the 9 declared third-party dependencies plus the `serve` extra: uvicorn).
 #
-# It deliberately does NOT resolve the three host-boundary imports
-# (core.memory_core, schemas.session, core.security_layer). Those are the
-# embedding seam, supplied by the host system, never by pip. See HOST_BOUNDARY.md.
-# A correctly provisioned environment therefore still fails the import chain at
-# the host boundary — that failure is the contract, not a defect. Validate with
-# `bash gate.sh`, which reports those blocks as EXPECTED.
+# Host types are declared in host_protocols.py (Protocol seam). This script
+# does not vendor a host MemoryManager. The embedding system supplies concrete
+# implementations that structurally satisfy those protocols. See HOST_BOUNDARY.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

@@ -36,23 +36,26 @@ lowers exposure. It does not make a checksum into a signature.
 | Manifest schema validation | `plugin_base.py:79` pydantic | **Real, but unreachable** until dependencies are installed. |
 | Regex blocklist scan | `plugin_manager.py:334` `PluginSecurityManager` | **Real but shallow** — substring/regex matching on `__import__`, `eval`, `exec`, `open`, `subprocess.`, `os.system`, `os.popen`. Trivially evaded by string construction. Superseded lineage. |
 
-**Current state: none of the above executes**, because `security.py` cannot be imported. See §3.
+**Current state (2026-09-18, PACKET-005):** `PluginManager.load_plugin` calls
+`SecurityManager.validate_plugin`, then assembles `HostCapabilityFacade`. Isolated
+plugins are staged through `create_sandbox` and imported only in
+`plugin_worker.worker_entry`. Local `install_from_archive` inspects zip members before extract, boot-probes
+a staged generation, and promotes with a live-link swing. The marketplace
+network path stays disabled. Permissions are object-capability policy.
 
 ---
 
 ## 3. Active security findings
 
-### SEC-01 — `security.py` cannot be imported — **CRITICAL, blocks all enforcement**
+### SEC-01 — `security.py` cannot be imported — **RESOLVED**
 
-`security.py:34` imports `PluginPermission` from `plugin_base`, which does not define it
-(`plugin_manager.py:75` does). The symbol is consumed at `security.py:220`, `:223`, `:226`,
-`:229`, `:419`, `:433`, `:703-705`.
+`PluginPermission` lives in `plugin_base.py`. `import security` succeeds. The production
+loader calls `SecurityManager.validate_plugin`. Historical claim that the symbol was
+missing is stale; do not revive it.
 
-**Consequence: the entire code-analysis and sandboxing layer is unreachable.** Any plugin
-loading that happens today happens with no security analysis whatsoever.
-
-*Status:* grep-verified absent. `ImportError` **PREDICTED, NOT YET OBSERVED** — dependency
-install is the prerequisite. *Fix lands in:* PACKET-002.
+*Residual:* analysis is static for HOST_INTEGRATED / VERIFIED. ISOLATED plugins
+that fail the host-integrated safety bar still load in a worker; CRITICAL
+issues are the remaining refusal class for that domain.
 
 ### SEC-02 — Signature verification is a checksum — **HIGH**
 
@@ -87,16 +90,13 @@ stores raw bytes **without parsing**, so the malformed key fails only inside
 
 **No real trust root is configured in this repository.**
 
-### SEC-05 — Zip-slip in archive extraction — **HIGH**
+### SEC-05 — Zip-slip in archive extraction — **RESOLVED on the local path**
 
-`marketplace.py:479` and `:538` call `zip_ref.extractall(extract_dir)` with **no member-path
-sanitization**. Archive entries containing `../` write outside the intended directory.
-
-Aggravating: the security scan runs **after** extraction (`:494`, `:553`). By the time analysis
-happens, traversal writes have already landed.
-
-`install_from_archive` (`:524`) is the only genuinely functional installation path in the
-module — and it is the one carrying this defect.
+`plugin_lifecycle.inspect_zip_members` rejects `..`, absolute paths, and links
+before any extract. `extract_zip_safe` never calls `ZipFile.extractall`.
+`install_from_archive` boot-probes the staged tree and only then promotes a
+live symlink. The network install path remains disabled and must not regain
+`extractall`.
 
 ### SEC-06 — Unbounded download despite a declared size cap — **MEDIUM**
 
@@ -129,19 +129,19 @@ controlled or the defaults must be removed.
 TLS itself is configured correctly: `ssl.create_default_context(cafile=certifi.where())`
 (`:198`), `TCPConnector` (`:199`), 30s total / 10s connect timeouts (`:200`).
 
-### SEC-09 — Resource limits are declared and unenforceable — **MEDIUM**
+### SEC-09 — Resource limits are measured, not terminated — **MEDIUM, residual**
 
-`manifest.memory_limit_mb` and `manifest.cpu_limit_percent` (`plugin_base.py:114-115`) are
-validated on input and not enforced at runtime. `orchestration.py:635` hardcodes CPU usage to
-`0.0`, so `ResourceMonitor.check_resource_limits` (`:124`) can never trip its CPU branch
-(`:132`). `ExecutionResult.memory_used` (`:74`) is never assigned.
+Orchestrator CPU is sampled over the request window (`process_time` / `monotonic`).
+`plugin_base.ResourceMonitor` reads real RSS. Isolated workers can be terminated.
+Host-integrated / verified timeouts cancel the await and record `NOT TERMINABLE`.
+`ExecutionResult.memory_used` is still unused. Declared `cpu_limit_percent` does
+not kill an in-process plugin.
 
-A resource-exhaustion plugin is currently unconstrained by these fields.
+### SEC-10 — Signature verification stub returns True — **RESOLVED by deletion**
 
-### SEC-10 — Signature verification stub returns True — **MEDIUM, superseded lineage**
-
-`plugin_manager.py:426-430` — the superseded lineage's signature verification is a stub that
-**always returns `True`**. Scheduled for deletion in PACKET-002. Do not carry it forward.
+`PluginSecurityManager` and its always-true `_verify_signature` were deleted in PACKET-002.
+Signature checking on the load path is `security.SecurityManager._verify_plugin_signature`
+when a signature is present and security level is HIGH.
 
 ---
 
@@ -149,15 +149,17 @@ A resource-exhaustion plugin is currently unconstrained by these fields.
 
 - **Never enable the marketplace network path** until SEC-02 through SEC-08 are resolved.
   `install_from_archive` with a locally verified archive is the only defensible install route
-  today, and only after SEC-05 is fixed.
-- **Never treat `trusted: true` in a manifest as meaningful.** It is a self-assertion by the
-  plugin author with no verification behind it.
+  today. Local `install_from_archive` is the proven path.
+- **Never treat `trusted: true` in a manifest as a verified trust root.** It is a
+  self-assertion. It now selects `HOST_INTEGRATED` domain. That is policy input,
+  not proof of origin.
 - **Never log credentials, tokens, or keys.** Per global operator doctrine.
 - **Never commit a real private key or a real trust root to this repository.** The placeholder
-  at `marketplace.py:839-842` must be replaced by host-supplied configuration, not by a
-  committed key.
-- **Assume plugin code is hostile** until `security.py` is importable and its analysis actually
-  runs. Today it does not run.
+  The former placeholder official PEM is no longer registered. Host-supplied
+  keys are registered per signed local install.
+- **Assume plugin code is hostile.** Static analysis runs on load. Untrusted
+  `security_level >= 4` plugins import in a worker. Do not treat a passing scan
+  as a sandbox for host-integrated plugins.
 
 ---
 
@@ -166,6 +168,7 @@ A resource-exhaustion plugin is currently unconstrained by these fields.
 | Finding | Lands in |
 |---|---|
 | SEC-01 | `packets/PACKET-002-lineage-convergence.md` |
-| SEC-02, SEC-03, SEC-04, SEC-05, SEC-06, SEC-07, SEC-08 | Not yet packetized. A marketplace hardening packet must be written before any network path is enabled. |
+| SEC-05 | `packets/PACKET-006-transactional-lifecycle.md` (local archive) |
+| SEC-02, SEC-03, SEC-04, SEC-06, SEC-07, SEC-08 | Network path stays disabled until a later marketplace packet. |
 | SEC-09 | Not yet packetized. Depends on `orchestration.py` resource instrumentation. |
 | SEC-10 | `packets/PACKET-002-lineage-convergence.md` (deletion) |
