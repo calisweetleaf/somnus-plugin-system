@@ -1,0 +1,16 @@
+{
+  "name": "isolated_probe",
+  "version": "1.0.0",
+  "description": "Isolated-domain harness plugin whose hang action must die with the worker.",
+  "author": "Somnus MAIL-Room",
+  "plugin_type": "agent_action",
+  "capabilities": [],
+  "permissions": ["read_memory"],
+  "trusted": false,
+  "signature": null,
+  "security_level": 4,
+  "agent_actions": ["hang", "ping"],
+  "memory_limit_mb": 128,
+  "cpu_limit_percent": 10.0,
+  "tags": ["harness", "isolated"]
+}

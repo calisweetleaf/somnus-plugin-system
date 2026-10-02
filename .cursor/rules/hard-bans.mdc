@@ -1,0 +1,14 @@
+---
+description: Repository hard bans for somnus-plugin-system
+alwaysApply: true
+---
+
+# Hard bans
+
+- Do not vendor, stub, or `try/except ImportError` around the host seam (`host_protocols.py`).
+- Do not migrate the flat layout to `src/`.
+- Do not author plugins against a superseded `plugin_manager.PluginBase`.
+- Do not enable the marketplace network path until SEC-02 through SEC-08 are closed.
+- Do not add pytest. Validation is a direct Python runner with JSON + MD + terminal evidence.
+- Do not use minimizing language (`thin`, `quick`, `small`, `easy`) for canonical work.
+- Do not keep duplicate `PluginManifest` / `PluginBase` / `PluginDiscovery` / `PluginFileWatcher` definitions.

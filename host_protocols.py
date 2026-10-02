@@ -11,8 +11,10 @@ Provenance: HOST_BOUNDARY.md section 4, strategy 1
 Files: host_protocols.py
 
 The protocols below mirror the 3 donor modules (core.memory_core, schemas.session,
-core.security_layer) and their 7 symbols across 6 import sites. Any host implementation
-that structurally conforms to these protocols will satisfy the plugin system's requirements.
+core.security_layer) and their 7 symbols. Live consumers import
+`from host_protocols import ...` (plugin_base, plugin_manager, hot_reload,
+host_capabilities). Any host implementation that structurally conforms to these
+protocols will satisfy the plugin system's requirements.
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ from uuid import UUID
 # ---------------------------------------------------------------------------
 # schemas.session — SessionID, UserID
 #
-# Consumed at: plugin_base.py:23, plugin_manager.py:45
+# Consumed at: plugin_base.PluginContext
 # Required behavior: constructible, comparable, usable as type annotations
 # on PluginContext.session_id and PluginContext.user_id. No behavioral
 # requirement beyond identity.
@@ -91,8 +93,8 @@ class MemoryScope(str, Enum):
 # ---------------------------------------------------------------------------
 # core.memory_core — MemoryManager
 #
-# Consumed at: plugin_base.py:22, plugin_manager.py:46, hot_reload.py:34
-# Required behavior: create_context, store_memory, retrieve_memory
+# Consumed at: PluginBase, PluginManager, HostCapabilityFacade, HotReload
+# Required behavior: create_context, store_memory, retrieve_memories, search_memories
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
@@ -180,7 +182,7 @@ class MemoryManager(Protocol):
     ) -> List[Any]:
         """Search memories with structured result objects.
 
-        Used by plugin_base.py:462 for checkpoint restoration.
+        Used by PluginBase.restore_checkpoint via the façade.
 
         Args:
             user_id: Owner to scope the search.
@@ -197,18 +199,18 @@ class MemoryManager(Protocol):
 # ---------------------------------------------------------------------------
 # core.security_layer — SecurityEnforcer
 #
-# Consumed at: plugin_manager.py:47
-# Required behavior: consumed only by the superseded lineage. PACKET-002
-# decides whether this dependency survives the convergence.
+# Consumed at: PluginManager.__init__, HostCapabilityFacade
+# Required behavior: host runtime-policy surface. Survived PACKET-002.
+# Static analysis authority is security.SecurityManager.
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
 class SecurityEnforcer(Protocol):
     """Protocol for the host-supplied security enforcement layer.
 
-    Currently consumed only by plugin_manager.py's PluginSecurityManager.
-    Whether this dependency survives the lineage convergence is decided by
-    PACKET-002. Defined here for completeness of the boundary contract.
+    Consumed by PluginManager. PACKET-002 ruled that SecurityEnforcer survives
+    as the host runtime-policy surface. Static analysis is security.SecurityManager.
+    PACKET-005 binds this protocol through the capability façade.
     """
 
     async def validate_action(

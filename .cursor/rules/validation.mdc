@@ -1,0 +1,12 @@
+---
+description: Evidence doctrine for somnus-plugin-system
+alwaysApply: true
+---
+
+# Validation
+
+- No pytest. Use `validate_system.py` or a sibling direct runner.
+- Every run writes a terminal readout plus JSON and Markdown artifacts under `test/system/runs/<timestamp>/`.
+- Distinguish component checks from end-to-end production-path checks in the report language.
+- A green check that does not exercise `PluginManager.load_plugin()` is not a plugin-system proof.
+- Harness host stand-ins stay in the validation runner. They never enter `host_protocols.py`.

@@ -11,14 +11,16 @@
 
 ## 0. Status of this contract
 
-This specification describes the **target** contract. Part of it is live in source today and
-part of it lands in `packets/PACKET-002-lineage-convergence.md`. Every clause is marked:
+This specification describes the **live** contract through PACKET-007.
 
-- **LIVE** — implemented in source now, at the cited line.
-- **PENDING-002** — ruled, specified, not yet in source. Do not assume it works.
+- **LIVE** — implemented in source now, at the cited surface.
+The contract is live through PACKET-007. Host embedding is the remaining work.
 
-An agent authoring a plugin **today** must read §7 before writing anything, because the only
-working loader still gates against the superseded base class.
+An agent authoring a plugin **today** subclasses `plugin_base.PluginBase`, implements the
+four `_plugin_*` hooks, declares `agent_actions`, and loads through
+`PluginManager.load_plugin()`. The third constructor argument is a
+`HostCapabilityFacade`, not a raw host `MemoryManager`. Permissions are
+object-capability policy.
 
 ---
 
@@ -26,42 +28,51 @@ working loader still gates against the superseded base class.
 
 | Concern | Canonical surface | Status |
 |---|---|---|
-| Manifest schema | `plugin_base.py:79` `PluginManifest` (pydantic `BaseModel`) | LIVE |
-| Capability taxonomy | `plugin_base.py:28` `PluginCapability` | LIVE |
-| Lifecycle states | `plugin_base.py:40` `PluginState` | LIVE |
-| Runtime context | `plugin_base.py:53` `PluginContext` | LIVE |
-| Runtime metrics | `plugin_base.py:67` `PluginMetrics` | LIVE |
-| Base class | `plugin_base.py:230` `PluginBase` | LIVE |
-| Permission taxonomy | `PluginPermission`, moving from `plugin_manager.py:75` into `plugin_base.py` | PENDING-002 |
-| Type taxonomy | `PluginType`, moving from `plugin_manager.py:63` into `plugin_base.py` | PENDING-002 |
-| Loader | `load_plugin`, moving from `plugin_manager.py:668` onto the canonical base | PENDING-002 |
-| API mounting | `_register_plugin_api`, moving from `plugin_manager.py:763` | PENDING-002 |
+| Manifest schema | `plugin_base.PluginManifest` (pydantic `BaseModel`) | LIVE |
+| Capability taxonomy | `plugin_base.PluginCapability` | LIVE |
+| Lifecycle states | `plugin_base.PluginState` | LIVE |
+| Runtime context | `plugin_base.PluginContext` | LIVE |
+| Runtime metrics | `plugin_base.PluginMetrics` | LIVE |
+| Base class | `plugin_base.PluginBase` | LIVE |
+| Permission taxonomy | `plugin_base.PluginPermission` | LIVE |
+| Type taxonomy | `plugin_base.PluginType` | LIVE |
+| Plugin identity | `plugin_base.plugin_identity(name, version)` → `{name}_{version}` | LIVE |
+| Discovery | `discovery.PluginDiscovery` | LIVE |
+| Static security | `security.SecurityManager` | LIVE |
+| Loader | `plugin_manager.PluginManager.load_plugin` | LIVE |
+| API mounting | Host route `/api/plugins/{plugin_id}/{path:path}` | LIVE |
+| Install | `marketplace.PluginInstaller.install_from_archive` zip-safe + staged | LIVE |
+| Reload | Blue/green `PluginManager.reload_plugin` | LIVE |
+| Reference plugin | `installed/example_plugin/` | LIVE |
+| Capability façade | `host_capabilities.HostCapabilityFacade` | LIVE |
+| Execution domain | `host_capabilities.select_execution_domain` | LIVE |
+| Isolated worker | `plugin_worker.IsolatedPluginHandle` | LIVE |
+| Exported actions | `plugin_base.ExportedAction` | LIVE |
 
-**Superseded and scheduled for deletion in PACKET-002:** `plugin_manager.py`'s `PluginManifest`
-(88), `PluginBase` (147), `PluginDiscovery` (498), `PluginFileWatcher` (446), `PluginStatus` (52).
+**Deleted by PACKET-002:** manager-local `PluginManifest`, `PluginBase`, `PluginDiscovery`,
+`PluginFileWatcher`, `PluginStatus`, `PluginPermission`, `PluginType`, `PluginSecurityManager`.
 
 ---
 
 ## 2. Manifest schema — 32 fields
 
-Source of truth: `plugin_base.py:79-136`. Loaded via `PluginManifest.from_file()` (`:126`),
-which delegates to pydantic `cls(**data)` — **malformed input raises**. This is the opposite
-tolerance posture from the superseded dataclass manifest, which hand-parsed with `.get()`
-defaults and silently accepted anything.
+Source of truth: `plugin_base.PluginManifest` (`plugin_base.py`, class body).
+Loaded via `PluginManifest.from_file()`, which delegates to pydantic
+`cls(**data)` — **malformed input raises**. This is the opposite tolerance
+posture from the superseded dataclass manifest, which hand-parsed with `.get()`
+defaults and silently accepted anything. Cite symbols, not frozen line numbers.
 
 ### Required — 5 fields, no defaults
 
 | Field | Type | Line |
 |---|---|---|
-| `name` | `str` | 81 |
-| `version` | `str` | 82 |
-| `description` | `str` | 83 |
-| `author` | `str` | 84 |
-| `plugin_type` | `str` | 85 |
+| `name` | `str` | 444 |
+| `version` | `str` | 445 |
+| `description` | `str` | 446 |
+| `author` | `str` | 447 |
+| `plugin_type` | `PluginType` | 448 |
 
-**Known contract weakness:** `plugin_type` is typed as a bare `str` here, while the superseded
-lineage typed it as the `PluginType` enum (`plugin_manager.py:66`). PACKET-002 narrows this
-field to `PluginType`. Until then any string validates.
+`plugin_type` is `PluginType`. `permissions` is `List[PluginPermission]`. Malformed values raise.
 
 ### Advanced capabilities — 4 fields
 
@@ -86,15 +97,24 @@ field to `PluginType`. Until then any string validates.
 
 | Field | Type | Default | Constraint | Line |
 |---|---|---|---|---|
-| `permissions` | `List[str]` | `[]` | — | 101 |
+| `permissions` | `List[PluginPermission]` | `[]` | — | 460 |
 | `trusted` | `bool` | `False` | — | 102 |
 | `signature` | `Optional[str]` | `None` | — | 103 |
 | `security_level` | `int` | `1` | `ge=1, le=5` | 104 |
 
-**PENDING-002:** `permissions` is narrowed from free-form `List[str]` to
-`List[PluginPermission]`. `security.py` already consumes it as the enum (`:220`, `:223`,
-`:226`, `:229`, `:419`, `:433`, `:703-705`) — the type is the thing that is missing, not the
-intent.
+**LIVE.** `permissions` is `List[PluginPermission]`. The loader assembles a
+`HostCapabilityFacade` from this list. A missing permission is the **absence of
+the capability object**, not a flag the plugin is trusted to honor.
+
+Domain selection (`host_capabilities.select_execution_domain`):
+
+- `trusted=True` or `security_level <= 2` → `HOST_INTEGRATED`
+- `security_level >= 4` and not trusted → `ISOLATED`
+- otherwise → `VERIFIED`
+
+`HOST_INTEGRATED` and `VERIFIED` stay in-process. `ISOLATED` imports `plugin.py`
+only inside `plugin_worker.worker_entry`. All three receive a façade. None
+receive a raw ambient `MemoryManager`.
 
 ### Integration points — 5 fields
 
@@ -106,8 +126,12 @@ intent.
 | `workflow_nodes` | `List[str]` | `[]` | 110 |
 | `memory_extensions` | `List[str]` | `[]` | 111 |
 
-**These five fields are declared and read by no loader code path.** Repository-wide grep finds
-only their declarations. See §6.
+`agent_actions` is the invocation allow-list. `PluginBase` binds declared names
+to handlers at construction. `orchestration.PluginExecutor.execute_plugin_method`
+dispatches only registered actions — `initialize`, `_plugin_*`, and other
+lifecycle methods are refused. API endpoint descriptors register into the generation table. The host owns
+`/api/plugins/{plugin_id}/{path:path}` permanently. Generation swing changes
+the dispatcher, not the FastAPI graph.
 
 ### Resource requirements — 4 fields
 
@@ -118,9 +142,10 @@ only their declarations. See §6.
 | `network_access_required` | `bool` | `False` | — | 116 |
 | `file_system_access` | `List[str]` | `[]` | — | 117 |
 
-**Enforcement note:** `cpu_limit_percent` is currently unenforceable. `orchestration.py:635`
-hardcodes CPU usage to `0.0`, so `ResourceMonitor.check_resource_limits` (`:124`) can never
-trip its CPU branch (`:132`). See `docs/DEFECT_INDEX.md` D-011.
+**Enforcement note:** orchestrator CPU is sampled over the request window
+(`time.process_time()` / `time.monotonic()`), not `loop.time()` since process
+start. In-process domains cannot kill a Python thread on timeout — they cancel
+the await and record `NOT TERMINABLE`. Isolated timeouts terminate the worker.
 
 ### Metadata — 5 fields
 
@@ -153,15 +178,14 @@ touch. Do not conflate them.
 
 ## 4. Permission taxonomy — `PluginPermission`
 
-Currently `plugin_manager.py:75-84`. **PENDING-002** — moves into `plugin_base.py`. Eight values.
+`plugin_base.py`. **LIVE.** Eight values.
 
 `read_memory` · `write_memory` · `network_access` · `file_system` · `system_commands` ·
 `user_interface` · `session_access` · `agent_control`
 
 ## 5. Type taxonomy — `PluginType`
 
-Currently `plugin_manager.py:63-72`. **PENDING-002** — moves into `plugin_base.py` and becomes
-the type of the `plugin_type` manifest field. Eight values.
+`plugin_base.py`. **LIVE.** Eight values. The `plugin_type` manifest field is this enum.
 
 `api_extension` · `ui_component` · `agent_action` · `memory_extension` · `workflow_node` ·
 `tool_integration` · `research_module` · `creative_engine`
@@ -204,55 +228,60 @@ async def _plugin_cleanup(self)    -> bool: ...
 The underscore prefix is the canonical convention. The superseded lineage used public `on_*`
 names with no cleanup hook. **Do not write `on_initialize`.**
 
-### State persistence — `plugin_base.py:392-474`. **LIVE.**
+### State persistence — `PluginBase.get_state` / `checkpoint_state`. **LIVE.**
 
 `get_state()` · `set_state()` · `checkpoint_state()` · `restore_checkpoint()`
 
-Checkpoints persist through `memory_manager.store_memory(...)`. Note `plugin_base.py:444-446`
-carries an in-place hand-patch from `MemoryType.SYSTEM`/`MemoryScope.PLUGIN` to
-`MemoryType.USER`/`MemoryScope.USER`, with the prior values still visible in comments —
-evidence of an incomplete repair against a shifted donor API. See `docs/DEFECT_INDEX.md` D-021.
+Checkpoints persist through the façade's `framework_store_memory` (or
+`store_memory` when `WRITE_MEMORY` is present). Canonical payload is
+content-addressed; telemetry lives in the envelope. Live checkpoint writes use
+`MemoryType.USER` / `MemoryScope.USER`. A host must supply at least those
+variants. `MemoryType.SYSTEM` / `MemoryScope.PLUGIN` remain in the Protocol
+vocabulary for other calls. See `docs/DEFECT_INDEX.md` D-021.
 
 ### Declared but unimplemented interfaces
 
-`ConsciousnessInterface` (`plugin_base.py:168`) and `NetworkInterface` (`:211`) are declared
-ABCs that nothing implements. `PluginBase` (`:230`) inherits only `PluginInterface`,
-`StateInterface`, `ABC`. Do not assume a plugin can rely on them.
+`ConsciousnessInterface` and `NetworkInterface` are `@runtime_checkable`
+Protocols on `plugin_base`. Nothing implements them. `PluginBase` inherits
+`ABC` only; the other Protocols are structural, not bases. Do not assume a
+plugin can rely on those interfaces.
 
 ---
 
 ## 7. Loader contract — read this before authoring
 
-Currently `plugin_manager.py:668-809`. **PENDING-002** for re-basing; the mechanism itself is
-LIVE and is what actually loads plugins today.
+`plugin_manager.PluginManager.load_plugin`. **LIVE** on the canonical lineage.
+
+Discovery keys plugins as `{name}_{version}` via `plugin_identity()`. The loader
+`issubclass` gate resolves `PluginBase` to `plugin_base.PluginBase` for
+in-process domains. Isolated plugins never enter host `exec_module`.
 
 ### Plugin module
 
-`_load_plugin_module` (`:730-761`) uses `importlib.util.spec_from_file_location` against
-`plugin.py`. The module **must** expose a module-level class named exactly `Plugin`:
+In-process load uses `importlib.util.spec_from_file_location` against `plugin.py`.
+The module **must** expose a module-level class named exactly `Plugin` that
+subclasses `plugin_base.PluginBase`. Construction is:
 
 ```python
-plugin_class = getattr(plugin_module, 'Plugin', None)          # plugin_manager.py:700
-if not plugin_class or not issubclass(plugin_class, PluginBase):  # :701
-    return False
-plugin_instance = plugin_class(plugin_id, manifest, self.memory_manager)  # :706
+facade = HostCapabilityFacade(host_memory, security_enforcer, manifest, plugin_id)
+plugin_instance = plugin_class(plugin_id, manifest, facade)
 ```
 
-> **LOAD-BEARING HAZARD.** The `issubclass` check at `:701` resolves `PluginBase` to the
-> **superseded** local class at `plugin_manager.py:147` — not the canonical
-> `plugin_base.PluginBase` at `:230`. **A plugin authored against this specification is
-> rejected by the current loader.** This is the single edge PACKET-002 exists to remove.
-> Until it lands, authoring against §6 produces a plugin that validates and does not load.
+The third argument is the façade. Isolated load stages a copy into a
+`SecurityManager.create_sandbox` tree and starts `IsolatedPluginHandle`.
 
-Construction is three positional arguments: `(plugin_id, manifest, memory_manager)`. The
-canonical `PluginBase.__init__` (`plugin_base.py:236-240`) accepts a fourth,
-`consciousness_level=0.0`, defaulted — so the three-argument call site remains compatible.
+`HOST_INTEGRATED` / `VERIFIED` timeouts cancel the await and record
+`NOT TERMINABLE`. Isolated timeouts terminate the worker PID.
 
 ### API extension
 
-`_register_plugin_api` (`:763-809`) imports **`api/__init__.py`** — **not** `api/routes.py` —
-and expects a module attribute named `router` (`:783`). Each route's endpoint is wrapped to
-inject the plugin instance (`:791-796`) and mounted at `/api/plugins/{plugin_id}` (`:799-803`).
+`PluginManager._collect_plugin_endpoints` imports **`api/__init__.py`** — **not**
+`api/routes.py` — and expects a module attribute named `router`. Endpoint
+descriptors register into the generation table. The host owns
+`/api/plugins/{plugin_id}/{path:path}` permanently via
+`_mount_host_plugin_routes` / `dispatch_plugin_http`. Generation swing changes
+the dispatcher, not the FastAPI graph. `include_router` on the manager is the
+management API at `/api/plugins`, not a per-plugin mount.
 
 **Unstated contract made explicit here:** if you split an API extension into `routes.py` and
 `models.py`, `api/__init__.py` **must re-export `router`**. Nothing else in the tree is imported.
@@ -260,12 +289,9 @@ inject the plugin instance (`:791-796`) and mounted at `/api/plugins/{plugin_id}
 ### Directories the loader never touches
 
 `agents/`, `workflows/`, `memory/`, and `assets/` are **never referenced by any loader code
-path.** Repository-wide grep for those names, `actions.py`, and `nodes.py` returns a single hit
-— `plugin_manager.py:766`, which is `api/__init__.py`.
-
-The directory convention mirrors the manifest field names in §2 "Integration points", but
-neither the directories nor those five manifest fields are read by anything today. They are
-conventional, not functional. Treat them as reserved surface.
+path.** `api_endpoints`, `ui_components`, `workflow_nodes`, and `memory_extensions`
+remain reserved manifest fields. `agent_actions` is functional — it is the
+exported-action allow-list bound by `PluginBase._bind_declared_actions`.
 
 ---
 
@@ -284,20 +310,23 @@ conventional, not functional. Treat them as reserved surface.
 └── assets/                 reserved — no loader reads this
 ```
 
-Discovery keys plugins as `f"{name}_{version}"` and reads `manifest.json` per subdirectory
-(`plugin_manager.py:498-564`).
+Discovery keys plugins as `plugin_identity(name, version)` and reads
+`manifest.json` per subdirectory (`discovery.PluginDiscovery` / `PluginIndex`).
 
-`installed/example_plugin/` currently matches this layout with **every file at 0 bytes**. It is
-a skeleton, not a reference. A real reference implementation lands in
-`packets/PACKET-004-reference-plugin.md`.
+`installed/example_plugin/` is the live reference. Runtime id: `example_plugin_1.0.0`.
+It subclasses `plugin_base.PluginBase`, exports `router` from `api/__init__.py`, and
+loads through `PluginManager.load_plugin()`.
 
 ---
 
 ## 9. What this contract does not cover
 
-- **Runtime behavior of `orchestration.py`, `marketplace.py`, `hot_reload.py`.** Those modules
-  are unreferenced by anything today and carry the defects registered in
-  `docs/DEFECT_INDEX.md`. They are not part of the plugin authoring contract.
+- **Authoring against `hot_reload.py`.** Reload authority is
+  `PluginManager.reload_plugin` (blue/green generations). `hot_reload.py` is a
+  file-watch integration that schedules that path; it is not the production
+  load path. Install authority is `marketplace.PluginInstaller.install_from_archive`.
+  Dispatch authority is `orchestration.PluginExecutor.execute_plugin_method`
+  (exported actions only). Remaining defects live in `docs/DEFECT_INDEX.md`.
 - **Host-supplied types.** `MemoryManager`, `MemoryType`, `MemoryImportance`, `MemoryScope`,
   `SessionID`, `UserID`, `SecurityEnforcer` are the embedding system's. See `HOST_BOUNDARY.md`.
 - **Trust and signing.** See `OPSEC.md`. Do not rely on `marketplace.py`'s signature path.

@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import hashlib
 import json
+import shutil
 import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.exceptions import InvalidSignature
 
-from plugin_base import PluginManifest, PluginCapability, PluginPermission
+from plugin_base import PluginManifest, PluginCapability, PluginPermission, plugin_identity
+from plugin_lifecycle import extract_zip_safe, inspect_zip_members, promote_live_link, ZipSlipError, allocate_generation_dir
 from security import SecurityManager, SecurityReport
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ class MarketplaceProvider(str, Enum):
     PRIVATE = "private"
 
 
-class PluginStatus(str, Enum):
+class ListingStatus(str, Enum):
     DRAFT = "draft"
     PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
@@ -90,7 +92,7 @@ class PluginListing:
     plugin_id: str
     manifest: PluginManifest
     provider: MarketplaceProvider
-    status: PluginStatus
+    status: ListingStatus
     channel: DistributionChannel
     
     download_url: str
@@ -179,7 +181,10 @@ class TrustSystem:
                 hashes.SHA256()
             )
             return True
-        except (InvalidSignature, Exception):
+        except InvalidSignature:
+            return False
+        except Exception as exc:
+            logger.error("Developer signature verification error: %s", exc)
             return False
     
     def register_developer_key(self, developer_id: str, public_key: bytes):
@@ -404,7 +409,7 @@ class RegistryClient:
             plugin_id=data.get('plugin_id', manifest.name),
             manifest=manifest,
             provider=MarketplaceProvider(data.get('provider', 'community')),
-            status=PluginStatus(data.get('status', 'approved')),
+            status=ListingStatus(data.get('status', 'approved')),
             channel=DistributionChannel(data.get('channel', 'public')),
             download_url=data.get('download_url', ''),
             signature_url=data.get('signature_url'),
@@ -435,150 +440,105 @@ class RegistryClient:
 
 
 class PluginInstaller:
-    def __init__(self, plugin_manager, security_manager: SecurityManager, config: MarketplaceConfig):
+    def __init__(self, plugin_manager, security_manager: SecurityManager, config: MarketplaceConfig, trust_system: Optional[Any] = None):
         self.plugin_manager = plugin_manager
         self.security_manager = security_manager
         self.config = config
+        self.trust_system = trust_system
         self.temp_dir = Path(tempfile.gettempdir()) / "morpheus_plugin_installs"
         self.temp_dir.mkdir(exist_ok=True)
         
     async def install_from_marketplace(self, plugin_id: str, version: Optional[str] = None,
                                      progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
-        
-        async with RegistryClient(self.config) as client:
-            listing = await client.get_plugin_details(plugin_id, version)
-            if not listing:
-                return False, f"Plugin {plugin_id} not found in marketplace"
-            
-            return await self.install_from_listing(listing, progress_callback)
+        return False, "marketplace network path is disabled (OPSEC SEC-02 through SEC-08)"
     
     async def install_from_listing(self, listing: PluginListing, 
                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
-        
-        if listing.trust_score < self.config.trust_level_threshold / 5.0:
-            return False, f"Plugin trust score too low: {listing.trust_score}"
-        
-        temp_file = self.temp_dir / f"{listing.plugin_id}_{listing.manifest.version}.zip"
-        
-        try:
-            async with RegistryClient(self.config) as client:
-                success = await client.download_plugin(listing, temp_file, progress_callback)
-                if not success:
-                    return False, "Download failed"
-                
-                if not await client.verify_download(listing, temp_file):
-                    return False, "Download verification failed"
-            
-            extract_dir = self.temp_dir / f"{listing.plugin_id}_extracted"
-            if extract_dir.exists():
-                import shutil
-                shutil.rmtree(extract_dir)
-            extract_dir.mkdir()
-            
-            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-            
-            plugin_dir = self._find_plugin_directory(extract_dir)
-            if not plugin_dir:
-                return False, "Invalid plugin archive structure"
-            
-            manifest_path = plugin_dir / 'manifest.json'
-            if not manifest_path.exists():
-                return False, "Plugin manifest not found"
-            
-            with open(manifest_path, 'r') as f:
-                manifest_data = json.load(f)
-            
-            manifest = PluginManifest(**manifest_data)
-            
-            is_safe, security_issues = await self.security_manager.validate_plugin(plugin_dir, manifest)
-            if not is_safe and not self.config.allow_unsigned_plugins:
-                return False, f"Security validation failed: {security_issues}"
-            
-            target_dir = self.plugin_manager.plugin_base_dir / "installed" / listing.plugin_id
-            if target_dir.exists():
-                import shutil
-                shutil.rmtree(target_dir)
-            
-            import shutil
-            shutil.move(str(plugin_dir), str(target_dir))
-            
-            success = await self.plugin_manager.load_plugin(listing.plugin_id)
-            if success:
-                logger.info(f"Successfully installed plugin: {listing.plugin_id}")
-                return True, "Installation completed successfully"
-            else:
-                return False, "Plugin installation succeeded but loading failed"
-        
-        except Exception as e:
-            logger.error(f"Plugin installation failed: {e}")
-            return False, f"Installation error: {e}"
-        
-        finally:
-            if temp_file.exists():
-                temp_file.unlink()
-            if 'extract_dir' in locals() and extract_dir.exists():
-                import shutil
-                shutil.rmtree(extract_dir)
-    
-    async def install_from_archive(self, archive_path: Path, 
-                                 progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
-        
+        return False, "marketplace network path is disabled (OPSEC SEC-02 through SEC-08)"
+
+    async def install_from_archive(
+        self,
+        archive_path: Path,
+        progress_callback: Optional[callable] = None,
+        developer_id: Optional[str] = None,
+        developer_public_key: Optional[bytes] = None,
+    ) -> Tuple[bool, str]:
         if not archive_path.exists() or not archive_path.is_file():
             return False, "Archive file not found"
-        
+
         if archive_path.stat().st_size > self.config.max_download_size_mb * 1024 * 1024:
             return False, "Archive file too large"
-        
+
+        reasons = inspect_zip_members(archive_path)
+        if reasons:
+            return False, f"archive rejected before extract: {'; '.join(reasons)}"
+
         extract_dir = self.temp_dir / f"local_install_{int(datetime.now().timestamp())}"
-        extract_dir.mkdir()
-        
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
         try:
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-            
+            extract_zip_safe(archive_path, extract_dir)
             plugin_dir = self._find_plugin_directory(extract_dir)
             if not plugin_dir:
                 return False, "Invalid plugin archive structure"
-            
-            manifest_path = plugin_dir / 'manifest.json'
+
+            manifest_path = plugin_dir / "manifest.json"
             if not manifest_path.exists():
                 return False, "Plugin manifest not found"
-            
-            with open(manifest_path, 'r') as f:
-                manifest_data = json.load(f)
-            
-            manifest = PluginManifest(**manifest_data)
-            
+
+            manifest = PluginManifest.from_file(manifest_path)
+            plugin_id = plugin_identity(manifest.name, manifest.version)
+
+            if manifest.signature:
+                if developer_public_key is None or self.trust_system is None:
+                    return False, "signed plugin requires a host-supplied verification key"
+                key_id = developer_id or manifest.author
+                self.trust_system.register_developer_key(key_id, developer_public_key)
+                if not self.trust_system.verify_developer_signature(
+                    archive_path.read_bytes(),
+                    manifest.signature,
+                    key_id,
+                ):
+                    return False, "developer signature verification failed"
+
             is_safe, security_issues = await self.security_manager.validate_plugin(plugin_dir, manifest)
-            if not is_safe:
-                if not self.config.allow_unsigned_plugins:
-                    return False, f"Security validation failed: {security_issues}"
-                else:
-                    logger.warning(f"Installing potentially unsafe plugin: {security_issues}")
-            
-            target_dir = self.plugin_manager.plugin_base_dir / "installed" / manifest.name
-            if target_dir.exists():
-                import shutil
-                shutil.rmtree(target_dir)
-            
-            import shutil
-            shutil.move(str(plugin_dir), str(target_dir))
-            
-            success = await self.plugin_manager.load_plugin(manifest.name)
-            if success:
-                logger.info(f"Successfully installed plugin from archive: {manifest.name}")
-                return True, "Installation completed successfully"
-            else:
-                return False, "Plugin installation succeeded but loading failed"
-        
-        except Exception as e:
-            logger.error(f"Archive installation failed: {e}")
-            return False, f"Installation error: {e}"
-        
+            from host_capabilities import ExecutionDomain, select_execution_domain
+            domain = select_execution_domain(manifest)
+            if not is_safe and domain != ExecutionDomain.ISOLATED:
+                return False, f"Security validation failed: {security_issues}"
+
+            generation_number = self.plugin_manager.generations.counter.get(plugin_id, 0) + 1
+            dest = allocate_generation_dir(
+                self.plugin_manager.plugin_base_dir,
+                manifest.name,
+                generation_number,
+            )
+            if dest.exists():
+                for child in dest.iterdir():
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+            shutil.copytree(plugin_dir, dest, dirs_exist_ok=True)
+
+            incoming = await self.plugin_manager.build_generation(dest, expected_id=plugin_id)
+            if incoming is None:
+                return False, "boot probe failed; live generation unchanged"
+
+            live = self.plugin_manager.plugin_base_dir / "installed" / manifest.name
+            promote_live_link(live, dest)
+            await self.plugin_manager.discovery.refresh_cache()
+            await self.plugin_manager.swing_generation(incoming)
+            logger.info("Installed plugin from archive: %s generation %s", plugin_id, incoming.generation)
+            return True, "Installation completed successfully"
+
+        except ZipSlipError as exc:
+            return False, f"archive rejected: {exc}"
+        except Exception as exc:
+            logger.error("Archive installation failed: %s", exc)
+            return False, f"Installation error: {exc}"
         finally:
             if extract_dir.exists():
-                import shutil
                 shutil.rmtree(extract_dir)
     
     async def uninstall_plugin(self, plugin_id: str) -> Tuple[bool, str]:
@@ -720,7 +680,7 @@ class PluginMarketplace:
         self.config = config or MarketplaceConfig()
         
         self.trust_system = TrustSystem()
-        self.installer = PluginInstaller(plugin_manager, security_manager, self.config)
+        self.installer = PluginInstaller(plugin_manager, security_manager, self.config, self.trust_system)
         self.update_manager = UpdateManager(plugin_manager, self.installer, self.config)
         
         self.download_progress: Dict[str, DownloadProgress] = {}
@@ -834,13 +794,9 @@ class PluginMarketplace:
 
 async def create_marketplace(plugin_manager, security_manager: SecurityManager, 
                            config: Optional[MarketplaceConfig] = None) -> PluginMarketplace:
-    marketplace = PluginMarketplace(plugin_manager, security_manager, config)
-    
-    official_key = b"""-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2gD+6F8H9L4Q8l0mV5R1
-...official marketplace public key...
------END PUBLIC KEY-----"""
-    
-    marketplace.trust_system.register_developer_key("morpheus_official", official_key)
-    
-    return marketplace
+    """Construct a marketplace. Does not register a placeholder official key.
+
+    Host-supplied verification keys are registered through
+    TrustSystem.register_developer_key when a signed local archive is installed.
+    """
+    return PluginMarketplace(plugin_manager, security_manager, config)

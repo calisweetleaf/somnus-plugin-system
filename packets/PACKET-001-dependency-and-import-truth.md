@@ -1,7 +1,7 @@
 # PACKET-001 — Dependency and Import Truth
 
 **Owner:** next executing agent
-**Status:** READY
+**Status:** LANDED
 **Depends on:** nothing
 **Size:** one session
 **Priority:** blocking — every other packet is gated behind this one

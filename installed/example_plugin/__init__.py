@@ -1,0 +1,1 @@
+"""Canonical reference plugin package."""

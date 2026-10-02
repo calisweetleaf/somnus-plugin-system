@@ -34,16 +34,15 @@ trajectory is deliberate over-engineering: strict deep integration, no thin adap
 
 | Fact | Status |
 |---|---|
-| Does it run? | **No.** Nothing in this repository imports today. |
-| Why | No dependencies installed, no `.venv`. Host is Python 3.12.3. |
-| Deeper blocker | `security.py:34` imports a symbol `plugin_base.py` does not define. **PREDICTED, not yet observed.** |
-| Architectural fact | Two rival plugin lineages shared this directory. `plugin_base.py` is **ruled canonical**; the merge has **not** been executed. |
-| Active packet | `PACKET-001` — dependency and import truth. Unblocks everything. |
-| Test suite | **Does not exist.** No `tests/`, no pytest config, no CI. |
-| Gate | `bash gate.sh` — reports `NOT RUN` for every dependency-gated check. |
+| Does it run? | **Yes.** The production loader loads `example_plugin_1.0.0` through a capability façade. |
+| Host boundary | `host_protocols.py` Protocol seam. Zero donor `core`/`schemas` imports. |
+| Lineage | `plugin_base.py` is canonical **in source**. Duplicate manager types deleted. |
+| Active packet | None. Host embedding is next. |
+| Validation | `validate_system.py` — 30 checks labeled component vs E2E. Mechanical STATE probe is in `gate.sh`. |
+| Gate | `bash gate.sh` — PASS on runnable checks; packet validator NOT RUN. |
 
-**Landed** this session: the control plane below. **Not landed:** any source change. The lineage
-convergence is specified, not executed.
+**Landed:** PACKET-001 through PACKET-007. The control plane and runtime now
+share one heartbeat.
 
 ---
 
@@ -95,14 +94,16 @@ the documents were inherited from a donor codebase whose context changed underne
 
 | Surface | Owns | Open when | Does **not** own | Neighbors | Evidence on change |
 |---|---|---|---|---|---|
-| `plugin_base.py` (620) | **CANONICAL** plugin contract: manifest, capabilities, lifecycle, base class | Authoring or changing any plugin type | Loading, module import, FastAPI mounting | consumed by `discovery`, `orchestration`, `security`, `marketplace` | `SPEC.md` must be updated in the same turn |
-| `plugin_manager.py` (1055) | **SUPERSEDED.** Retains the only loader (`:668`) and FastAPI mount (`:763`) | Working on loading or API mounting | The contract — its `PluginManifest`/`PluginBase` are scheduled for deletion | zero inbound consumers | `PACKET-002` |
-| `security.py` (914) | Trust boundary, AST analysis, sandbox | Any trust or code-analysis work | Distribution trust scoring | consumed by `marketplace.py:28` | `OPSEC.md` |
-| `discovery.py` (824) | Discovery, dependency graph (`:134`), topological sort (`:304`) | Discovery or dependency work | Execution scheduling | consumes `plugin_base` | — |
-| `orchestration.py` (734) | Priority-queued async dispatch + workflow interpretation | Scheduling or workflow work | Dependency resolution — that is `discovery.py` | consumes `plugin_base`; consumed by nothing | `docs/DEFECT_INDEX.md` D-001, D-002, D-009–D-014 |
-| `hot_reload.py` (834) | Development reload, state preservation | Reload work | Lifecycle states — its `PluginState` is a different concept | consumed by nothing | — |
-| `marketplace.py` (845) | Distribution | Distribution work | Trust enforcement — that is `security.py` | consumes `plugin_base`, `security` | `OPSEC.md` SEC-02…SEC-08 |
-| `installed/` | Plugin installation root | Installing or scaffolding a plugin | Nothing — `example_plugin/` is **14 files at 0 bytes** | `SPEC.md` §8 | `PACKET-004` |
+| `plugin_base.py` | **CANONICAL** plugin contract: manifest, capabilities, lifecycle, exported actions | Authoring or changing any plugin type | Loading, module import, FastAPI mounting | consumed by `discovery`, `orchestration`, `security`, `marketplace` | `SPEC.md` must be updated in the same turn |
+| `plugin_manager.py` | **LOADER.** Discovers, validates, assembles a façade, loads in-process or isolated | Working on loading or API mounting | The contract — that is `plugin_base.py` | consumes base, discovery, security, capabilities, worker | `PACKET-005` |
+| `host_capabilities.py` | Object-capability façade and domain selection | Permission or domain work | Host Protocol implementations | consumed by loader and worker | `OPSEC.md` |
+| `plugin_worker.py` | Isolated worker process + parent handle | Untrusted/isolated load | In-process execution | consumed by loader | `PACKET-005` |
+| `security.py` | Trust boundary, AST analysis, sandbox staging | Any trust or code-analysis work | Distribution trust scoring | consumed by `marketplace.py`, loader | `OPSEC.md` |
+| `discovery.py` | Discovery, dependency graph, topological sort | Discovery or dependency work | Execution scheduling | consumes `plugin_base` | — |
+| `orchestration.py` | Priority-queued dispatch of **exported actions** only | Scheduling or workflow work | Dependency resolution — that is `discovery.py` | consumes `plugin_base` | `docs/DEFECT_INDEX.md` |
+| `hot_reload.py` | Development reload with `PluginRuntimeSnapshot` | Reload work | Lifecycle states | consumed by nothing | `PACKET-006` |
+| `marketplace.py` | Distribution | Distribution work | Trust enforcement — that is `security.py` | consumes `plugin_base`, `security` | `OPSEC.md` SEC-02…SEC-08 |
+| `installed/` | Plugin installation root | Installing or scaffolding a plugin | Reserved dirs are not executed | `SPEC.md` §8 | `PACKET-004` |
 
 ### Control plane
 

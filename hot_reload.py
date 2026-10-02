@@ -53,8 +53,12 @@ class StatePreservationLevel(str, Enum):
 
 
 @dataclass
-class PluginState:
-    """Comprehensive plugin state container for preservation across reloads"""
+class PluginRuntimeSnapshot:
+    """Runtime snapshot preserved across reloads.
+
+    Distinct from plugin_base.PluginState, which is the lifecycle enum.
+    Renamed during PACKET-002 lineage convergence.
+    """
     plugin_id: str
     version: str
     state_data: Dict[str, Any] = field(default_factory=dict)
@@ -88,7 +92,7 @@ class PluginState:
             return json.dumps(data, default=str).encode('utf-8')
     
     @classmethod
-    def deserialize(cls, data: bytes) -> 'PluginState':
+    def deserialize(cls, data: bytes) -> 'PluginRuntimeSnapshot':
         """Deserialize state from persistence.
 
         JSON-only deserialization. pickle.loads is deliberately excluded
@@ -253,7 +257,7 @@ class StateManager:
     
     def __init__(self, memory_manager: MemoryManager):
         self.memory_manager = memory_manager
-        self.plugin_states: Dict[str, PluginState] = {}
+        self.plugin_states: Dict[str, PluginRuntimeSnapshot] = {}
         self.state_lock = threading.RLock()
         self.preservation_callbacks: Dict[str, List[Callable]] = defaultdict(list)
         
@@ -262,14 +266,14 @@ class StateManager:
         plugin_id: str, 
         plugin_instance: Any,
         preservation_level: StatePreservationLevel = StatePreservationLevel.FULL
-    ) -> PluginState:
+    ) -> PluginRuntimeSnapshot:
         """
         Capture comprehensive plugin state for preservation during reload.
         
         Implements deep state introspection with memory coherence preservation.
         """
         try:
-            state = PluginState(
+            state = PluginRuntimeSnapshot(
                 plugin_id=plugin_id,
                 version=getattr(plugin_instance, 'version', '1.0.0')
             )
@@ -320,7 +324,7 @@ class StateManager:
         except Exception as e:
             logger.error(f"Failed to capture state for plugin {plugin_id}: {e}")
             # Return minimal state
-            return PluginState(plugin_id=plugin_id, version='unknown')
+            return PluginRuntimeSnapshot(plugin_id=plugin_id, version='unknown')
     
     def _auto_capture_state(self, plugin_instance: Any) -> Dict[str, Any]:
         """Automatically capture serializable plugin attributes"""
@@ -368,7 +372,7 @@ class StateManager:
         # For now, return empty dict
         return {}
     
-    async def _persist_state(self, state: PluginState):
+    async def _persist_state(self, state: PluginRuntimeSnapshot):
         """Persist plugin state in memory system"""
         try:
             await self.memory_manager.store_memory(
@@ -391,7 +395,7 @@ class StateManager:
         self, 
         plugin_id: str, 
         plugin_instance: Any,
-        state: Optional[PluginState] = None
+        state: Optional[PluginRuntimeSnapshot] = None
     ) -> bool:
         """
         Restore plugin state after reload.
@@ -487,6 +491,7 @@ class HotReloadEngine:
         
         # Performance tracking
         self.reload_metrics: Dict[str, Dict[str, float]] = defaultdict(dict)
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
         
     async def start_monitoring(self, plugin_dirs: List[Path]):
         """Start file system monitoring for hot-reload"""
@@ -498,6 +503,7 @@ class HotReloadEngine:
             )
         
         self.observer.start()
+        self.loop = asyncio.get_running_loop()
         
         # Start reload processor
         asyncio.create_task(self._process_reload_queue())
@@ -509,7 +515,7 @@ class HotReloadEngine:
         self.observer.stop()
         self.observer.join()
         
-        self.reload_executor.shutdown(wait=True, timeout=30)
+        self.reload_executor.shutdown(wait=True)
         
         logger.info("Hot-reload monitoring stopped")
     
@@ -594,87 +600,14 @@ class HotReloadEngine:
             return False
     
     async def _hot_reload(self, plugin_id: str) -> bool:
-        """Hot reload with full state preservation"""
-        plugin_instance = self.plugin_manager.active_plugins.get(plugin_id)
-        if not plugin_instance:
-            logger.warning(f"Plugin {plugin_id} not active for hot reload")
-            return False
-        
-        try:
-            # 1. Capture current state
-            state = await self.state_manager.capture_plugin_state(
-                plugin_id, 
-                plugin_instance, 
-                StatePreservationLevel.FULL
-            )
-            
-            # 2. Gracefully deactivate (without full unload)
-            await plugin_instance.deactivate()
-            
-            # 3. Reload module
-            module_name = f"morpheus_plugin_{plugin_id}"
-            if module_name in sys.modules:
-                importlib.reload(sys.modules[module_name])
-            
-            # 4. Create new instance
-            plugin_module = sys.modules[module_name]
-            plugin_class = getattr(plugin_module, 'Plugin')
-            new_instance = plugin_class(plugin_id, plugin_instance.manifest, self.memory_manager)
-            
-            # 5. Initialize new instance
-            if not await new_instance.initialize():
-                logger.error(f"Hot reload initialization failed for {plugin_id}")
-                return False
-            
-            # 6. Restore state
-            await self.state_manager.restore_plugin_state(plugin_id, new_instance, state)
-            
-            # 7. Activate new instance
-            if not await new_instance.activate():
-                logger.error(f"Hot reload activation failed for {plugin_id}")
-                return False
-            
-            # 8. Replace in plugin manager
-            self.plugin_manager.active_plugins[plugin_id] = new_instance
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Hot reload failed for {plugin_id}: {e}")
-            # Attempt to restore original instance
-            try:
-                await plugin_instance.activate()
-            except:
-                pass
-            return False
+        """Blue/green reload through the manager generation table."""
+        return await self.plugin_manager.reload_plugin(plugin_id)
     
     async def _warm_reload(self, plugin_id: str) -> bool:
-        """Warm reload with partial state preservation"""
-        # Similar to hot reload but with StatePreservationLevel.PARTIAL
-        plugin_instance = self.plugin_manager.active_plugins.get(plugin_id)
-        if not plugin_instance:
-            return await self.plugin_manager.load_plugin(plugin_id)
-        
-        state = await self.state_manager.capture_plugin_state(
-            plugin_id, 
-            plugin_instance, 
-            StatePreservationLevel.PARTIAL
-        )
-        
-        # Full unload and reload cycle
-        await self.plugin_manager.unload_plugin(plugin_id)
-        success = await self.plugin_manager.load_plugin(plugin_id)
-        
-        if success:
-            new_instance = self.plugin_manager.active_plugins[plugin_id]
-            await self.state_manager.restore_plugin_state(plugin_id, new_instance, state)
-        
-        return success
+        return await self.plugin_manager.reload_plugin(plugin_id)
     
     async def _cold_reload(self, plugin_id: str) -> bool:
-        """Cold reload with no state preservation"""
-        await self.plugin_manager.unload_plugin(plugin_id)
-        return await self.plugin_manager.load_plugin(plugin_id)
+        return await self.plugin_manager.reload_plugin(plugin_id)
     
     async def _cascade_reload(self, plugin_id: str) -> bool:
         """Cascade reload affecting dependents"""
@@ -745,16 +678,17 @@ class PluginFileHandler(FileSystemEventHandler):
         self._schedule_debounced_reload(plugin_id, reload_type)
     
     def _extract_plugin_id(self, file_path: Path) -> Optional[str]:
-        """Extract plugin ID from file path"""
-        parts = file_path.parts
-        try:
-            if 'morpheus_plugins' in parts:
-                plugins_index = parts.index('morpheus_plugins')
-                if plugins_index + 2 < len(parts):
-                    return parts[plugins_index + 2]  # Skip 'morpheus_plugins/installed/'
-        except (ValueError, IndexError):
-            pass
-        
+        """Extract plugin ID from the nearest manifest.json."""
+        from plugin_base import plugin_identity
+
+        for parent in [file_path.parent, *file_path.parents]:
+            manifest_path = parent / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    data = json.loads(manifest_path.read_text())
+                    return plugin_identity(data["name"], data["version"])
+                except Exception:
+                    return None
         return None
     
     def _file_changed(self, file_path: Path) -> bool:
@@ -782,15 +716,21 @@ class PluginFileHandler(FileSystemEventHandler):
             return ReloadType.WARM_RELOAD  # Other files need warm reload
     
     def _schedule_debounced_reload(self, plugin_id: str, reload_type: ReloadType):
-        """Schedule reload with debouncing to prevent reload storms"""
-        # Cancel existing timer
-        if plugin_id in self.debounce_timers:
-            self.debounce_timers[plugin_id].cancel()
-        
-        # Schedule new reload
-        self.debounce_timers[plugin_id] = asyncio.create_task(
-            self.reload_engine.schedule_reload(plugin_id, reload_type, delay=1.0)
-        )
+        """Schedule reload on the manager loop. Never create_task on the observer thread."""
+        loop = getattr(self.reload_engine, "loop", None)
+        if loop is None:
+            logger.error("Hot-reload loop is not bound; dropping reload for %s", plugin_id)
+            return
+
+        def enqueue() -> None:
+            existing = self.debounce_timers.get(plugin_id)
+            if existing is not None:
+                existing.cancel()
+            self.debounce_timers[plugin_id] = loop.create_task(
+                self.reload_engine.schedule_reload(plugin_id, reload_type, delay=1.0)
+            )
+
+        loop.call_soon_threadsafe(enqueue)
 
 
 # Integration with main plugin manager

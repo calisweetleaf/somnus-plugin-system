@@ -456,8 +456,63 @@ A generated map, a summary, or the router never owns behavior it merely describe
   changed. Verify any inherited status claim against source. See `2026-09-05 — NEGATIVE KNOWLEDGE`.
 - `BOUNDARY-SEVERING` — reimplementing host types locally to make imports resolve is attractive,
   clean, and wrong. See `2026-09-05 — REJECTED PATH: SEVERING THE HOST BOUNDARY`.
-- `ENV-NO-DEPS` — no `.venv`, no installed dependencies. Python 3.12.3 on the host. Nothing in
-  this repository imports today. See `packets/PACKET-001-dependency-and-import-truth.md`.
+- `ENV-NO-DEPS` — **superseded 2026-09-18.** `.venv` exists; modules import; the remaining
+  hazard is ambient in-process execution, not missing dependencies.
+
+## 2026-09-18 — AUTHORITY CONVERGENCE LANDED
+
+**Keys:** `PACKET-002` · `PACKET-004` · `plugin_identity` · `example_plugin_1.0.0` · `SecurityEnforcer` · `SecurityManager`
+
+- `plugin_base.py` is canonical in source. Manager-local contract types are deleted.
+- Plugin identity is `{name}_{version}` via `plugin_identity()`.
+- `SecurityEnforcer` survives as the host policy Protocol. Static analysis is
+  `security.SecurityManager`. The always-true signature stub is gone.
+- Checkpoints hash canonical plugin-owned state. Duplicate content returns the
+  existing stored checkpoint id.
+- `installed/example_plugin/` is the reference. Production path proven in
+  `validate_system.py` check `production_load_path`.
+- Permissions remain descriptive until PACKET-005.
+
+## 2026-09-18 — EXECUTION BOUNDARY LANDED
+
+**Keys:** `PACKET-005` · `HostCapabilityFacade` · `ExecutionDomain` · `IsolatedPluginHandle`
+
+- No plugin receives a raw ambient `MemoryManager` from the loader.
+- Missing permission is absence of the object.
+- Domain: trusted or `security_level<=2` → HOST_INTEGRATED; `>=4` untrusted →
+  ISOLATED; else VERIFIED.
+- Isolated plugins that fail the host-integrated safety bar still load in a
+  worker. CRITICAL issues remain a refusal class.
+- `agent_actions` is the only orchestrator invocation namespace.
+- In-process timeouts cannot kill a Python thread; they record `NOT TERMINABLE`.
+- Isolated timeouts terminate the worker.
+
+## 2026-09-18 — TRANSACTIONAL LIFECYCLE LANDED
+
+**Keys:** `PACKET-006` · `ZipSlipError` · `PluginGeneration`
+
+- Zip members are inspected before extract. `extractall` is gone from marketplace.
+- Live generation N is never deleted before N+1 boot-probes.
+- Host FastAPI graph is permanent; swing changes the generation table.
+- Watchdog uses `loop.call_soon_threadsafe`. Placeholder official PEM is not registered.
+
+## 2026-09-18 — TRUTH HARNESS LANDED
+
+**Keys:** `PACKET-007` · `state_probe` · `component` vs `e2e`
+
+- Do not read component 18/18 as system validation.
+- Cross-generation restore looks up `checkpoint_id` in host memory, not the
+  in-process `_checkpoints` dict of generation N.
+- STATE.md mechanical block is generated. Humans write interpretation only.
+
+## 2026-09-18 — AUDITORS AFTER HEARTBEAT
+
+**Keys:** `SPEC.md` · `HOST_BOUNDARY.md` · `plugin-contract-auditor`
+
+- Source and reference plugin conform. Remaining findings were SPEC/HOST_BOUNDARY
+  citations (agent_actions unread, include_router story, ABC vs Protocol, 33-field
+  comment, stale donor-import header). Those surfaces were repaired after the
+  read-only reports. Host-boundary validator: clean bill, 0 donor imports.
 
 ---
 

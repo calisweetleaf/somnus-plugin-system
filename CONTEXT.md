@@ -209,6 +209,62 @@ Recommended lookup order:
 
 ---
 
+## 2026-09-18 — AUTHORITY CONVERGENCE; ONE HEARTBEAT
+
+**Keys:** `PACKET-002` · `PACKET-004` · `PACKET-005` · `example_plugin` · `plugin_identity` · `production_load_path`
+
+- **State:** The loader runs the canonical lineage. Gate duplicate-class PENDING items are gone.
+  19/19 harness PASS is component checks plus one production path — not adversarial coverage.
+- **Next read:** `STATE.md`, `packets/PACKET-005-execution-boundary.md`
+- **Open:** capability façade, transactional install/reload, truth harness.
+
+---
+
+## 2026-09-18 — EXECUTION BOUNDARY LANDED
+
+**Keys:** `PACKET-005` · `HostCapabilityFacade` · `ExecutionDomain` · `IsolatedPluginHandle` · `ExportedAction` · `NOT TERMINABLE`
+
+- **State:** Permissions are object-capability policy. Isolated plugins import
+  in a worker. 22/22 harness PASS is still not adversarial coverage.
+- **Next read:** `STATE.md`, `packets/PACKET-006-transactional-lifecycle.md`
+- **Open:** staged install, blue/green generations, host-owned route, truth harness.
+
+---
+
+## 2026-09-18 — TRANSACTIONAL LIFECYCLE LANDED
+
+**Keys:** `PACKET-006` · `inspect_zip_members` · `promote_live_link` · `GenerationTable` · `dispatch_plugin_http`
+
+- **State:** Local install is zip-safe and staged. Reload is blue/green. Host
+  route is stable. 25/25 harness PASS.
+- **Next read:** `STATE.md`, `packets/PACKET-007-truth-harness.md`
+- **Open:** adversarial labels + mechanical STATE.
+
+---
+
+## 2026-09-18 — TRUTH HARNESS LANDED
+
+**Keys:** `PACKET-007` · `tools/state_probe.py` · `component` · `e2e` · `STATE_PROBE`
+
+- **State:** 30/30 harness PASS is 18 component + 12 E2E at
+  `test/system/runs/20260918T232952Z`. STATE.md includes a generated probe
+  block citing HEAD `34dfeca`. Packets 001–007 are landed.
+- **Next read:** `STATE.md`
+- **Open:** host embedding.
+
+---
+
+## 2026-09-18 — CONTRACT AUDIT AFTER 007
+
+**Keys:** `plugin-contract-auditor` · `host-boundary-validator` · SPEC §§7/9
+
+- **State:** Source clean. SPEC/HOST_BOUNDARY citations repaired to live
+  surfaces. Donor grep 0. Class counts 1/1/1/1.
+- **Next read:** `SPEC.md`, `HOST_BOUNDARY.md`
+- **Open:** host embedding.
+
+---
+
 ## Context Maintenance Notes
 
 - A context entry can be only a handful of bullets if those bullets preserve the right traversal keys.

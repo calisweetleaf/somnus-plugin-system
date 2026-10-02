@@ -1,16 +1,12 @@
 """Somnus Plugin System — Canonical Plugin Contract and Lifecycle Engine.
 
-Modified: 2026-09-06
-Modified by: Stilgar (Claude Code, Daeron operator)
-Justification: PACKET-001 (dependency/import truth), PACKET-002 (lineage convergence), and
-    SOTA++ deep integration pass. Absorbed PluginPermission and PluginType from the superseded
-    plugin_manager.py lineage. Replaced ABC-only interfaces with Protocol-based structural
-    subtyping. Added capability lattice algebra, content-addressed state checkpoints with
-    Merkle hashing, exponentially-weighted moving average metrics, typed event bus, and
-    real resource measurement via stdlib. Host boundary realized via host_protocols.py
-    (Protocol declaration strategy per HOST_BOUNDARY.md section 4).
-Provenance: SPEC.md, MEMORY.md 2026-09-05 LINEAGE RULING, HOST_BOUNDARY.md
-Files: plugin_base.py, host_protocols.py
+Modified: 2026-09-18
+Modified by: Stilgar (Cursor Grok 4.6, Daeron operator)
+Justification: PACKET-005. Exported actions are the only invocation namespace.
+    The third constructor argument is a capability-scoped host façade. Framework
+    checkpoint persistence no longer requires WRITE_MEMORY.
+Provenance: SPEC.md, packets/PACKET-005-execution-boundary.md
+Files: plugin_base.py, host_capabilities.py, plugin_manager.py
 
 This module is the canonical plugin contract. When SPEC.md and this module disagree,
 this module wins and SPEC.md is repaired in the same turn.
@@ -42,6 +38,7 @@ from typing import (
     Dict,
     FrozenSet,
     Generic,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -72,6 +69,15 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 PluginT = TypeVar("PluginT", bound="PluginBase")
+
+
+def plugin_identity(name: str, version: str) -> str:
+    """Canonical runtime plugin id: ``{name}_{version}``.
+
+    Discovery, the loader, and marketplace install all key plugins with this
+    function. Directory names stay filesystem paths; they are not identities.
+    """
+    return f"{name}_{version}"
 
 
 # ---------------------------------------------------------------------------
@@ -424,13 +430,13 @@ class PluginMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Plugin manifest — the 33-field contract (32 original + plugin_type narrowed)
+# Plugin manifest — the 32-field contract (plugin_type and permissions narrowed)
 # ---------------------------------------------------------------------------
 
 class PluginManifest(BaseModel):
     """Enhanced plugin manifest with consciousness integration.
 
-    Pydantic-validated manifest with 33 fields. Malformed input raises.
+    Pydantic-validated manifest with 32 fields. Malformed input raises.
     This is the canonical manifest — the superseded dataclass manifest from
     plugin_manager.py has been deleted per PACKET-002.
     """
@@ -694,6 +700,45 @@ class ResourceMonitor:
 
 
 # ---------------------------------------------------------------------------
+# Exported actions — the only invocation namespace
+# ---------------------------------------------------------------------------
+
+_RESERVED_ACTION_NAMES = frozenset({
+    "initialize",
+    "activate",
+    "deactivate",
+    "cleanup",
+    "checkpoint_state",
+    "restore_checkpoint",
+    "get_state",
+    "set_state",
+    "get_info",
+    "_plugin_initialize",
+    "_plugin_activate",
+    "_plugin_deactivate",
+    "_plugin_cleanup",
+})
+
+
+@dataclass(frozen=True)
+class ExportedAction:
+    """Descriptor for a plugin method the orchestrator may dispatch."""
+
+    name: str
+    handler: Callable[..., Any]
+    permissions: FrozenSet[PluginPermission] = field(default_factory=frozenset)
+
+
+class ActionNotExported(PermissionError):
+    """Raised when orchestration is asked to invoke a non-exported method."""
+
+    def __init__(self, plugin_id: str, action: str) -> None:
+        self.plugin_id = plugin_id
+        self.action = action
+        super().__init__(f"{action} is not an exported action of {plugin_id}")
+
+
+# ---------------------------------------------------------------------------
 # Plugin base class — the canonical implementation contract
 # ---------------------------------------------------------------------------
 
@@ -724,14 +769,25 @@ class PluginBase(ABC):
         self.manifest = manifest
         self.memory_manager = memory_manager
         self.consciousness_level = consciousness_level
+        self.execution_domain: str = getattr(memory_manager, "domain", None)
+        if self.execution_domain is not None and hasattr(self.execution_domain, "value"):
+            self.execution_domain = self.execution_domain.value
+        if not self.execution_domain:
+            self.execution_domain = "host_integrated"
 
         self.state = PluginState.INITIALIZING
         self.context: Optional[PluginContext] = None
         self.metrics = PluginMetrics()
         self.execution_lock = asyncio.Lock()
 
+        self.memory_namespace = f"plugin:{plugin_id}"
+        self.startup_tasks: List[Callable] = []
+        self.shutdown_tasks: List[Callable] = []
+        self._exported_actions: Dict[str, ExportedAction] = {}
+
         self._internal_state: Dict[str, Any] = {}
         self._checkpoints: Dict[str, StateCheckpoint] = {}
+        self._hash_to_checkpoint_id: Dict[str, str] = {}
         self._checkpoint_generation: int = 0
         self._event_handlers: Dict[PluginEventType, List[Callable]] = {}
         self._resource_monitor = ResourceMonitor(self.manifest)
@@ -740,8 +796,33 @@ class PluginBase(ABC):
         self._quantum_state: Dict[str, Any] = {}
         self._recursive_depth: int = 0
         self._temporal_anchor: datetime = datetime.now(timezone.utc)
+        self._bind_declared_actions()
 
         logger.info(f"Plugin {plugin_id} created with consciousness level {consciousness_level}")
+
+    def register_exported_action(
+        self,
+        name: str,
+        handler: Callable[..., Any],
+        permissions: Optional[Iterable[PluginPermission]] = None,
+    ) -> None:
+        """Register a method the orchestrator is allowed to dispatch."""
+        if not name or name.startswith("_") or name in _RESERVED_ACTION_NAMES:
+            raise ValueError(f"{name} cannot be registered as an exported action")
+        granted = frozenset(permissions) if permissions is not None else frozenset(self.manifest.permissions)
+        self._exported_actions[name] = ExportedAction(name=name, handler=handler, permissions=granted)
+
+    def get_exported_action(self, name: str) -> Optional[ExportedAction]:
+        return self._exported_actions.get(name)
+
+    def exported_action_names(self) -> List[str]:
+        return list(self._exported_actions.keys())
+
+    def _bind_declared_actions(self) -> None:
+        for name in self.manifest.agent_actions:
+            handler = getattr(self, name, None)
+            if callable(handler):
+                self.register_exported_action(name, handler, self.manifest.permissions)
 
     def _transition_state(self, target: PluginState) -> None:
         """Validate and execute a state transition against the directed graph."""
@@ -771,6 +852,10 @@ class PluginBase(ABC):
 
             if PluginCapability.CONSCIOUSNESS_ACCESS in self.manifest.capabilities:
                 await self._initialize_consciousness()
+
+            if not await self._validate_declared_dependencies():
+                self._transition_state(PluginState.ERROR)
+                return False
 
             success = await self._plugin_initialize()
 
@@ -804,6 +889,8 @@ class PluginBase(ABC):
                         return False
 
                 await self._resource_monitor.start()
+                for task in self.startup_tasks:
+                    await task()
                 success = await self._plugin_activate()
 
                 if success:
@@ -828,6 +915,8 @@ class PluginBase(ABC):
         try:
             self._transition_state(PluginState.TERMINATING)
             await self._resource_monitor.stop()
+            for task in self.shutdown_tasks:
+                await task()
             success = await self._plugin_deactivate()
 
             if success:
@@ -868,19 +957,26 @@ class PluginBase(ABC):
 
     # -- State persistence with content-addressed checkpoints -----------------
 
-    async def get_state(self) -> Dict[str, Any]:
+    def _canonical_state(self) -> Dict[str, Any]:
+        """Plugin-owned state only. Observational metadata is not hashed."""
         return {
             "plugin_id": self.plugin_id,
-            "state": self.state.value,
             "consciousness_level": self.consciousness_level,
             "consciousness_coherence": self._consciousness_coherence,
             "recursive_depth": self._recursive_depth,
-            "metrics": self.metrics.snapshot(),
             "internal_state": self._internal_state.copy(),
             "quantum_state": self._quantum_state.copy(),
+        }
+
+    async def get_state(self) -> Dict[str, Any]:
+        envelope = self._canonical_state()
+        envelope.update({
+            "state": self.state.value,
+            "metrics": self.metrics.snapshot(),
             "resource_snapshot": self._resource_monitor.snapshot(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        })
+        return envelope
 
     async def set_state(self, state: Dict[str, Any]) -> bool:
         try:
@@ -903,19 +999,25 @@ class PluginBase(ABC):
             return False
 
     async def checkpoint_state(self) -> str:
-        """Create a content-addressed state checkpoint."""
-        state_data = await self.get_state()
+        """Create a content-addressed checkpoint of canonical plugin state.
+
+        Telemetry and timestamps live on the envelope, not the Merkle payload.
+        Duplicate content returns the existing stored checkpoint id.
+        """
+        payload = self._canonical_state()
+        merkle = _merkle_hash(payload)
+        existing = self._hash_to_checkpoint_id.get(merkle)
+        if existing is not None:
+            logger.debug(f"Plugin {self.plugin_id}: deduplicated checkpoint {existing}")
+            return existing
+
         self._checkpoint_generation += 1
-
-        ckpt = StateCheckpoint.create(self.plugin_id, state_data, self._checkpoint_generation)
-
-        if ckpt.merkle_hash in {c.merkle_hash for c in self._checkpoints.values()}:
-            logger.debug(f"Plugin {self.plugin_id}: deduplicated checkpoint (same content)")
-            return ckpt.checkpoint_id
-
+        ckpt = StateCheckpoint.create(self.plugin_id, payload, self._checkpoint_generation)
         self._checkpoints[ckpt.checkpoint_id] = ckpt
+        self._hash_to_checkpoint_id[merkle] = ckpt.checkpoint_id
 
-        await self.memory_manager.store_memory(
+        store = getattr(self.memory_manager, "framework_store_memory", None) or self.memory_manager.store_memory
+        await store(
             user_id=f"plugin_{self.plugin_id}",
             content=f"Checkpoint {ckpt.checkpoint_id}",
             memory_type=MemoryType.USER,
@@ -926,7 +1028,7 @@ class PluginBase(ABC):
                 "plugin_id": self.plugin_id,
                 "merkle_hash": ckpt.merkle_hash,
                 "generation": ckpt.generation,
-                "state_data": state_data,
+                "state_data": payload,
             },
         )
 
@@ -940,15 +1042,18 @@ class PluginBase(ABC):
                 await self._emit_event(PluginEventType.CHECKPOINT_RESTORED, {"checkpoint_id": checkpoint_id})
             return success
 
-        memories = await self.memory_manager.search_memories(
+        search = getattr(self.memory_manager, "framework_search_memories", None) or self.memory_manager.search_memories
+        memories = await search(
             user_id=f"plugin_{self.plugin_id}",
-            query=f"checkpoint {checkpoint_id}",
+            query=checkpoint_id,
             memory_type=MemoryType.USER,
             limit=1,
         )
 
         if memories:
-            state_data = memories[0].metadata.get("state_data")
+            first = memories[0]
+            metadata = first.metadata if hasattr(first, "metadata") else first.get("metadata", {})
+            state_data = metadata.get("state_data") if metadata else None
             if state_data:
                 success = await self.set_state(state_data)
                 if success:
@@ -972,6 +1077,8 @@ class PluginBase(ABC):
             "consciousness_coherence": self._consciousness_coherence,
             "capabilities": [cap.value for cap in self.manifest.capabilities],
             "permissions": [p.value for p in self.manifest.permissions],
+            "execution_domain": self.execution_domain,
+            "exported_actions": self.exported_action_names(),
             "metrics": self.metrics.snapshot(),
             "resource_usage": self._resource_monitor.snapshot(),
             "created_at": self._temporal_anchor.isoformat(),
@@ -1006,6 +1113,59 @@ class PluginBase(ABC):
                 logger.error(f"Event handler error for {event_type.value}: {exc}")
 
     # -- Consciousness subsystem ----------------------------------------------
+
+    async def store_plugin_memory(
+        self, key: str, data: Any, importance: MemoryImportance = MemoryImportance.MEDIUM
+    ) -> UUID:
+        """Persist plugin-namespaced data through the host memory protocol."""
+        return await self.memory_manager.store_memory(
+            user_id="system",
+            content=json.dumps(data, default=str),
+            memory_type=MemoryType.SYSTEM_EVENT,
+            importance=importance,
+            tags=[self.plugin_id, "plugin_data"],
+            metadata={
+                "plugin_id": self.plugin_id,
+                "data_key": key,
+                "namespace": self.memory_namespace,
+            },
+        )
+
+    async def retrieve_plugin_memory(self, key: str) -> Optional[Any]:
+        """Retrieve plugin-namespaced data from the host memory protocol."""
+        memories = await self.memory_manager.retrieve_memories(
+            user_id="system",
+            query=f"{self.memory_namespace}:{key}",
+            memory_types=[MemoryType.SYSTEM_EVENT],
+            limit=1,
+        )
+        if not memories:
+            return None
+        try:
+            return json.loads(memories[0]["content"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
+
+    def add_startup_task(self, task: Callable) -> None:
+        self.startup_tasks.append(task)
+
+    def add_shutdown_task(self, task: Callable) -> None:
+        self.shutdown_tasks.append(task)
+
+    async def _validate_declared_dependencies(self) -> bool:
+        """Validate declared Python package dependencies against the environment."""
+        try:
+            import importlib_metadata
+        except ImportError:
+            import importlib.metadata as importlib_metadata
+
+        for dep in self.manifest.dependencies:
+            try:
+                importlib_metadata.distribution(dep)
+            except importlib_metadata.PackageNotFoundError:
+                logger.error(f"Plugin {self.plugin_id} missing dependency: {dep}")
+                return False
+        return True
 
     async def _initialize_consciousness(self) -> None:
         self._consciousness_coherence = 1.0
